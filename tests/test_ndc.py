@@ -1129,10 +1129,10 @@ class RulesTests(unittest.TestCase):
     def test_changing_stacks_and_domains_updates_the_rules(self):
         d = _repo()
         activator.activate(["software"], d, CFG, ["python"])
-        activator.activate(["software"], d, CFG, ["go"])
+        activator.activate(["software"], d, CFG, ["node"])
         r = d / ".claude/rules/ndc"
         self.assertFalse((r / "python").exists())
-        self.assertTrue((r / "golang").exists())
+        self.assertTrue((r / "typescript").exists())
         activator.activate([], d, CFG)
         self.assertEqual(activator.read_manifest(d)["rules"], [])
         self.assertFalse((d / ".claude/rules").exists())

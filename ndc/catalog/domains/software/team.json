@@ -78,7 +78,7 @@
         "python-review"
       ]
     },
-    "typescript": {
+    "node": {
       "agents": {
         "senior": [
           "typescript-reviewer"
@@ -116,220 +116,19 @@
         "react-test"
       ]
     },
-    "vue": {
+    "react-native": {
       "agents": {
         "senior": [
-          "vue-reviewer"
+          "react-reviewer"
         ]
       },
       "skills": [
-        "vue-patterns",
-        "nuxt4-patterns",
-        "vite-patterns"
+        "react-native-patterns"
       ],
       "rules": [
-        "vue",
-        "web"
+        "react-native"
       ],
-      "commands": [
-        "vue-review"
-      ]
-    },
-    "go": {
-      "agents": {
-        "senior": [
-          "go-reviewer",
-          "go-build-resolver"
-        ]
-      },
-      "skills": [
-        "golang-patterns",
-        "golang-testing"
-      ],
-      "rules": [
-        "golang"
-      ],
-      "commands": [
-        "go-build",
-        "go-review",
-        "go-test"
-      ]
-    },
-    "rust": {
-      "agents": {
-        "senior": [
-          "rust-reviewer",
-          "rust-build-resolver"
-        ]
-      },
-      "skills": [
-        "rust-patterns",
-        "rust-testing"
-      ],
-      "rules": [
-        "rust"
-      ],
-      "commands": [
-        "rust-build",
-        "rust-review",
-        "rust-test"
-      ]
-    },
-    "java": {
-      "agents": {
-        "senior": [
-          "java-reviewer",
-          "java-build-resolver"
-        ]
-      },
-      "skills": [
-        "java-coding-standards",
-        "springboot-patterns",
-        "springboot-tdd",
-        "jpa-patterns"
-      ],
-      "rules": [
-        "java"
-      ],
-      "commands": [
-        "gradle-build"
-      ]
-    },
-    "kotlin": {
-      "agents": {
-        "senior": [
-          "kotlin-reviewer",
-          "kotlin-build-resolver"
-        ]
-      },
-      "skills": [
-        "kotlin-patterns",
-        "kotlin-testing",
-        "kotlin-coroutines-flows"
-      ],
-      "rules": [
-        "kotlin"
-      ],
-      "commands": [
-        "kotlin-build",
-        "kotlin-review",
-        "kotlin-test"
-      ]
-    },
-    "swift": {
-      "agents": {
-        "senior": [
-          "swift-reviewer",
-          "swift-build-resolver"
-        ]
-      },
-      "skills": [
-        "swiftui-patterns",
-        "swift-concurrency-6-2"
-      ],
-      "rules": [
-        "swift"
-      ]
-    },
-    "cpp": {
-      "agents": {
-        "senior": [
-          "cpp-reviewer",
-          "cpp-build-resolver"
-        ]
-      },
-      "skills": [
-        "cpp-coding-standards",
-        "cpp-testing"
-      ],
-      "rules": [
-        "cpp"
-      ],
-      "commands": [
-        "cpp-build",
-        "cpp-review",
-        "cpp-test"
-      ]
-    },
-    "csharp": {
-      "agents": {
-        "senior": [
-          "csharp-reviewer"
-        ]
-      },
-      "skills": [
-        "csharp-testing",
-        "dotnet-patterns"
-      ],
-      "rules": [
-        "csharp"
-      ]
-    },
-    "php": {
-      "agents": {
-        "senior": [
-          "php-reviewer"
-        ]
-      },
-      "skills": [
-        "laravel-patterns",
-        "laravel-tdd"
-      ],
-      "rules": [
-        "php"
-      ]
-    },
-    "django": {
-      "agents": {
-        "senior": [
-          "django-reviewer",
-          "django-build-resolver"
-        ]
-      },
-      "skills": [
-        "django-patterns",
-        "django-tdd",
-        "django-security"
-      ],
-      "rules": [
-        "python"
-      ]
-    },
-    "fastapi": {
-      "agents": {
-        "senior": [
-          "fastapi-reviewer"
-        ]
-      },
-      "skills": [
-        "fastapi-patterns"
-      ],
-      "rules": [
-        "python"
-      ],
-      "commands": [
-        "fastapi-review"
-      ]
-    },
-    "flutter": {
-      "agents": {
-        "senior": [
-          "flutter-reviewer",
-          "dart-build-resolver"
-        ]
-      },
-      "skills": [
-        "dart-flutter-patterns",
-        "flutter-dart-code-review"
-      ],
-      "rules": [
-        "dart"
-      ],
-      "commands": [
-        "flutter-build",
-        "flutter-review",
-        "flutter-test"
-      ]
+      "commands": []
     }
   },
   "rules": [

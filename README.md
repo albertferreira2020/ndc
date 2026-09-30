@@ -63,7 +63,7 @@ ndc task add "Add login" --desc "acceptance: ..." --kind work --verify "npm test
 ndc uninstall                                 # removes everything NDC installed (--purge also deletes .ndc/)
 ```
 
-Stacks: `activate software --stack go` replaces the previous stacks; `--add` keeps them.
+Stacks: `activate software --stack node` replaces the previous stacks; `--add` keeps them.
 
 ## How `ndc plan` stays safe
 
