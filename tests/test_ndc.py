@@ -409,9 +409,7 @@ class ActivatorTests(unittest.TestCase):
         self.assertTrue((ag / "po.md").exists() and (ag / "python-reviewer.md").exists())
         self.assertIn("model: haiku", (ag / "doc-updater.md").read_text())
         self.assertIn("model: opus", (ag / "planner.md").read_text())
-        self.assertFalse((ag / "marketing-agent.md").exists())
-        activator.activate(["marketing"], t, CFG)
-        self.assertTrue((ag / "marketing-agent.md").exists())
+        activator.activate([], t, CFG)  # core only: the software team is removed
         self.assertFalse((ag / "planner.md").exists())
         self.assertFalse((ag / "python-reviewer.md").exists())
         self.assertTrue((ag / "po.md").exists())  # core stays
@@ -419,9 +417,9 @@ class ActivatorTests(unittest.TestCase):
     def test_add_keeps_previous(self):
         t = Path(tempfile.mkdtemp())
         activator.activate(["software"], t, CFG)
-        activator.activate(["marketing"], t, CFG, add=True)
+        activator.activate([], t, CFG, ["python"], add=True)
         self.assertTrue((t / ".claude/agents/planner.md").exists())
-        self.assertTrue((t / ".claude/agents/marketing-agent.md").exists())
+        self.assertTrue((t / ".claude/agents/python-reviewer.md").exists())
 
     def test_refuses_to_overwrite_foreign_agent(self):
         t = Path(tempfile.mkdtemp())
@@ -559,7 +557,7 @@ class PlannerTests(unittest.TestCase):
 
     def test_prompt_lists_domains_but_not_core(self):
         pr = self.plan.build_prompt("build x", "ctx", self.domains, feedback="- bad thing")
-        self.assertIn("- marketing:", pr)
+        self.assertIn("- software:", pr)
         self.assertNotIn("- core:", pr)
         self.assertIn("bad thing", pr)
 
@@ -1135,7 +1133,7 @@ class RulesTests(unittest.TestCase):
         r = d / ".claude/rules/ndc"
         self.assertFalse((r / "python").exists())
         self.assertTrue((r / "golang").exists())
-        activator.activate(["marketing"], d, CFG)
+        activator.activate([], d, CFG)
         self.assertEqual(activator.read_manifest(d)["rules"], [])
         self.assertFalse((d / ".claude/rules").exists())
 
@@ -1610,9 +1608,9 @@ class ProjectFootprintTests(unittest.TestCase):
     def test_switching_domains_rewrites_the_block(self):
         d = _repo()
         activator.activate(["software"], d, CFG)
-        activator.activate(["marketing"], d, CFG)
+        activator.activate([], d, CFG)
         ex = (d / ".git/info/exclude").read_text()
-        self.assertIn("/.claude/agents/marketing-agent.md", ex)
+        self.assertIn("/.claude/agents/po.md", ex)
         self.assertNotIn("/.claude/agents/planner.md", ex)
         self.assertEqual(ex.count(">>> ndc"), 1)
         self.assertEqual(_git(d, "status", "--porcelain"), "")
@@ -1702,8 +1700,8 @@ class EccExtrasTests(unittest.TestCase):
         cd = t / ".claude/commands"
         self.assertTrue((cd / "plan.md").exists() and (cd / "python-review.md").exists())
         self.assertFalse((cd / "go-review.md").exists())
-        activator.activate(["marketing"], t, CFG)
-        self.assertTrue((cd / "marketing-campaign.md").exists() and (cd / "save-session.md").exists())
+        activator.activate([], t, CFG)
+        self.assertTrue((cd / "save-session.md").exists())
         self.assertFalse((cd / "plan.md").exists())
         activator.uninstall(t)
         self.assertFalse((t / ".claude").exists())

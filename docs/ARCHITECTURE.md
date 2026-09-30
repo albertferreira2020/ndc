@@ -43,4 +43,4 @@ STOP -> handoff report -> (wait for reset) -> next task
 1. Watch for changes in the `/usage` output format (parser is strict).
 2. Calibrating default costs with real runs.
 3. Parallel execution (worktrees) with a shared budget.
-4. Domain-specific agents for marketing, research etc. (ECC has few; expect to write them).
+4. Only the software domain is supported; the others were removed.

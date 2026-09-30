@@ -6,7 +6,7 @@ NDC builds on [ECC](https://github.com/affaan-m/ECC) (vendored, unmodified, in `
 
 | Piece | What it does |
 |---|---|
-| **Domains** (`ndc/catalog/domains/*/team.json`) | The whole catalog stays in the repo, but only the team for the current job is activated in a project (software, marketing, research, infra, ml, healthcare, opensource). `core` is always on. |
+| **Domains** (`ndc/catalog/domains/*/team.json`) | The whole catalog stays in the repo, but only the software team is activated in a project (with the stacks you choose). `core` is always on. |
 | **Usage guardian** (`ndc/guardian.py`) | Predicts what the next task costs (measured p80 per complexity class, conservative defaults until history exists) and decides `GO`, `WIND_DOWN` (low budget, only tasks that fit) or `STOP`. Checks every window (session and weekly). |
 | **Queue** (`ndc/store.py`) | SQLite task queue with dependencies, failure counts and per-run usage history. |
 | **PO, autonomous** (`ndc/plan.py`) | `ndc plan "<goal>"` runs the PO (opus) headlessly: it picks the domains and returns a backlog as one JSON document that NDC validates field by field before anything is written. |
@@ -63,7 +63,7 @@ ndc task add "Add login" --desc "acceptance: ..." --kind work --verify "npm test
 ndc uninstall                                 # removes everything NDC installed (--purge also deletes .ndc/)
 ```
 
-Switching teams: `activate marketing` replaces the previous domain (core stays); `activate marketing --add` keeps it.
+Stacks: `activate software --stack go` replaces the previous stacks; `--add` keeps them.
 
 ## How `ndc plan` stays safe
 
@@ -194,7 +194,7 @@ Not validated or not built:
 - The verify blocklist and the security scan are heuristics, not a sandbox or a proof of safety.
 - No scheduler: NDC runs only when you invoke it. It cannot swap an interactive session that is already open (see New sessions).
 - The quality gates are heuristics: passing them does not mean the code is correct. Regression checks are only as good as the project's own tests.
-- Only the software domain has a complete team; the others are thin.
+- NDC covers only the software domain (other domains were removed on purpose).
 - Hooks need Node.js. The registered command is shell-neutral, but only macOS is tested (Windows: untested).
 
 `/usage` reports whole percentages, so a task cheaper than one point is recorded as 0.5. Estimates for small tasks stay coarse. The default cost estimates in `ndc/guardian.py` are assumptions, not measurements, replaced by real history after 3 runs per class and window.
