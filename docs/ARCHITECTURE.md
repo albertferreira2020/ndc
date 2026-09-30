@@ -1,7 +1,7 @@
 # NDC architecture
 
 ```
-goal -> PO (opus) -> task queue (SQLite) -> runner loop
+goal -> `ndc plan`: PO (opus, read-only) -> JSON -> validate -> approval -> activate domains + queue (SQLite) -> runner loop
                                               |
               usage bridge -> guardian: GO / WIND_DOWN / STOP
                                               |

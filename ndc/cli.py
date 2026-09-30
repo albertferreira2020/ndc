@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import activator, classify, handoff, runner, store
+from . import activator, classify, handoff, plan as planner, runner, store
 from .config import load_config
 from .guardian import decide
 from .router import route
@@ -62,6 +62,14 @@ def main(argv=None) -> int:
     tl = ts.add_parser("list")
     tl.add_argument("--status")
 
+    pl = sub.add_parser("plan", help="the PO (opus) turns a goal into a validated backlog and activates the domains")
+    pl.add_argument("goal")
+    pl.add_argument("--yes", action="store_true", help="write the backlog without asking (required when not in a terminal)")
+    pl.add_argument("--no-activate", action="store_true", help="do not activate the domains the PO chose")
+    pl.add_argument("--append", action="store_true", help="allow planning while tasks are already pending")
+    pl.add_argument("--retries", type=int, default=1, help="extra PO calls if the answer is invalid (default 1)")
+    pl.add_argument("--ignore-usage", action="store_true")
+
     g = sub.add_parser("guard", help="would the next ready task fit?")
     g.add_argument("--complexity", help="check a class instead of the next task")
 
@@ -75,12 +83,14 @@ def main(argv=None) -> int:
     r.add_argument("--ignore-usage", action="store_true", help="run even when usage is unknown")
     r.add_argument("--wait", action="store_true", help="sleep until the limit resets, then continue")
     r.add_argument("--timeout", type=int, default=3600)
+    r.add_argument("--goal", help="if the queue is empty, let the PO plan this goal first (needs --yes)")
+    r.add_argument("--yes", action="store_true", help="approve the PO's backlog without asking")
 
     args = p.parse_args(argv)
     cfg = load_config()
     try:
         return _dispatch(args, cfg)
-    except (KeyError, ValueError, FileExistsError) as e:
+    except (KeyError, ValueError, FileExistsError, planner.PlanError) as e:
         print(f"error: {e.args[0] if isinstance(e, KeyError) else e}", file=sys.stderr)
         return 2
 
@@ -95,6 +105,32 @@ def _report_ignore(tgt, manifest, f=...):
         print(f"hidden from git via {f}")
     for t in project.tracked(tgt, manifest):
         print(f"warning: git already tracks {t}; the ignore rule does not apply (run `git rm --cached`)")
+
+
+def _plan(goal, cfg, db, yes, activate, retries, ignore_usage, append) -> bool:
+    if not append and store.list_tasks(db, "pending"):
+        raise ValueError("the queue already has pending tasks; finish them or use --append")
+    if not yes and not sys.stdin.isatty():
+        raise ValueError("not a terminal, so the plan cannot be reviewed: re-run with --yes to approve it up front")
+    if not ignore_usage:
+        try:
+            us = read_usage(cfg)
+        except UsageUnavailable as e:
+            raise ValueError(f"usage unknown, not spending opus tokens on planning: {e}")
+        d = decide(us, "L", cfg, lambda w, c: store.history(db, w, c))  # planning costs about one L task
+        if d.action == "STOP":
+            raise ValueError(f"not enough budget to plan: {d.reason}")
+    plan = planner.make_plan(goal, cfg, Path.cwd(), retries=retries)
+    print(planner.format_plan(plan))
+    if not yes and input("\nWrite this backlog and activate its domains? [y/N] ").strip().lower() not in ("y", "yes", "s", "sim"):
+        print("aborted, nothing written")
+        return False
+    if activate:
+        m = activator.activate(plan["domains"], Path.cwd(), cfg, plan.get("stacks", []), add=True)
+        print(f"active: core + {', '.join(m['domains'])}  |  {len(m['agents'])} agents, {len(m['skills'])} skills")
+    inserted = planner.insert(db, plan)
+    print(f"{len(inserted)} tasks added. Next: ndc run (dry run) or ndc run --execute")
+    return True
 
 
 def _dispatch(args, cfg) -> int:
@@ -191,7 +227,15 @@ def _dispatch(args, cfg) -> int:
             return 1
         print("Continue the work described in this handoff.\n\n" + latest.read_text())
         return 0
+    if args.cmd == "plan":
+        return 0 if _plan(args.goal, cfg, db, args.yes, not args.no_activate, args.retries, args.ignore_usage,
+                          args.append) else 1
     if args.cmd == "run":
+        if args.goal and not store.list_tasks(db, "pending"):
+            if not _plan(args.goal, cfg, db, args.yes, True, 1, args.ignore_usage, False):
+                return 1
+        elif args.goal:
+            print("queue already has pending tasks: skipping the PO")
         res = runner.run(db, cfg, args.execute, args.ignore_usage, args.wait, args.timeout)
         return 0 if res == "idle" else 3
     return 1

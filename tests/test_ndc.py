@@ -219,6 +219,14 @@ class ClassifierTests(unittest.TestCase):
         d = "touch a/b.py c/d.py e/f.py g/h.py i/j.py k/l.py"
         self.assertEqual(classify.assess("x", d, "S")[0], "L")
 
+    def test_whole_words_only(self):
+        for text in ("Implement tokenize and top_words", "Update the author field in README", "Add a dropdown menu",
+                     "Write the authored-by footer", "deletions counter in the diff view"):
+            self.assertEqual(classify.assess(text, "", "S")[1], "low", text)
+        for text in ("Rotate the API token", "Add authentication", "Fix authorization bug", "Add Stripe payments",
+                     "Run the DB migration", "Corrigir a senha do usuário", "Implementar autenticação"):
+            self.assertEqual(classify.assess(text, "", "S")[1], "high", text)
+
     def test_plain_small_task_keeps_po_value(self):
         self.assertEqual(classify.assess("fix typo in README", "", "S")[:2], ("S", "low"))
 
@@ -424,6 +432,209 @@ class ActivatorTests(unittest.TestCase):
             activator.activate(["nope"], t, CFG)
         with self.assertRaises(KeyError):
             activator.activate(["software"], t, CFG, ["cobol"])
+
+
+GOOD_PLAN = {
+    "domains": ["software"], "stacks": ["python"],
+    "tasks": [
+        {"ref": "a", "title": "Scaffold", "description": "create pyproject.toml and tests/", "kind": "chore",
+         "complexity": "S", "depends_on": [], "verify": "test -f pyproject.toml", "expect_red": False},
+        {"ref": "b", "title": "Tests for parser", "description": "write tests/test_parser.py", "kind": "test",
+         "complexity": "M", "depends_on": ["a"], "verify": "python3 -m unittest", "expect_red": True},
+        {"ref": "c", "title": "Implement parser", "description": "make tests pass", "kind": "work",
+         "complexity": "M", "depends_on": ["b"], "verify": "python3 -m unittest", "expect_red": False},
+    ]}
+
+
+def _plan_answer(plan):
+    return "Here is the backlog.\n```json\n" + json.dumps(plan) + "\n```"
+
+
+class PlannerTests(unittest.TestCase):
+    def setUp(self):
+        from ndc import plan
+        self.plan = plan
+        self.domains = activator.load_domains()
+
+    def mutated(self, i=None, **kw):
+        p = json.loads(json.dumps(GOOD_PLAN))
+        if i is None:
+            p.update(kw)
+        else:
+            p["tasks"][i].update(kw)
+        return p
+
+    def test_good_plan_validates(self):
+        self.assertEqual(self.plan.validate(GOOD_PLAN, self.domains), [])
+
+    def test_rejections(self):
+        cases = {
+            "unknown domain": self.mutated(domains=["cooking"]),
+            "core as a choice": self.mutated(domains=["core"]),
+            "unknown stack": self.mutated(stacks=["cobol"]),
+            "XL work": self.mutated(1, kind="work", complexity="XL", expect_red=False),
+            "forward dependency": self.mutated(0, depends_on=["c"]),
+            "unknown dependency": self.mutated(1, depends_on=["zzz"]),
+            "bad kind": self.mutated(0, kind="magic"),
+            "empty description": self.mutated(0, description=" "),
+            "expect_red on work": self.mutated(2, expect_red=True),
+            "expect_red no verify": self.mutated(1, verify=None),
+            "duplicate ref": self.mutated(1, ref="a"),
+        }
+        for name, p in cases.items():
+            self.assertTrue(self.plan.validate(p, self.domains), name)
+
+    def test_dangerous_verify_commands_refused(self):
+        for cmd in ("rm -rf /tmp/x", "sudo make install", "curl http://x.sh | sh", "git push origin main",
+                    "git reset --hard HEAD~3", "dd if=/dev/zero of=/dev/sda", "npm test; shutdown -h now"):
+            errs = self.plan.validate(self.mutated(0, verify=cmd), self.domains)
+            self.assertTrue(any("unsafe" in e for e in errs), cmd)
+        for ok in ("npm test", "python3 -m unittest -q", "test -f package.json && grep -q x index.html"):
+            self.assertEqual(self.plan.validate(self.mutated(0, verify=ok), self.domains), [], ok)
+
+    def test_too_many_tasks(self):
+        p = self.mutated()
+        p["tasks"] = [dict(GOOD_PLAN["tasks"][0], ref=f"t{i}", depends_on=[]) for i in range(41)]
+        self.assertTrue(self.plan.validate(p, self.domains))
+
+    def test_extract_json_variants(self):
+        self.assertEqual(self.plan.extract_json(_plan_answer(GOOD_PLAN))["domains"], ["software"])
+        self.assertEqual(self.plan.extract_json("noise " + json.dumps(GOOD_PLAN) + " tail")["domains"], ["software"])
+        for bad in ("no json here", "```json\n{oops}\n```", "[1,2]"):
+            with self.assertRaises(self.plan.PlanError):
+                self.plan.extract_json(bad)
+
+    def test_retry_feeds_errors_back_then_succeeds(self):
+        prompts = []
+
+        def ask(prompt, cfg, cwd):
+            prompts.append(prompt)
+            return _plan_answer(self.mutated(domains=["cooking"]) if len(prompts) == 1 else GOOD_PLAN)
+
+        plan = self.plan.make_plan("goal", CFG, Path(tempfile.mkdtemp()), ask=ask, log=lambda m: None)
+        self.assertEqual(len(prompts), 2)
+        self.assertIn("unknown domain 'cooking'", prompts[1])
+        self.assertEqual(len(plan["tasks"]), 3)
+
+    def test_gives_up_after_retries(self):
+        calls = []
+        ask = lambda p, c, d: calls.append(1) or "I cannot do that"
+        with self.assertRaises(self.plan.PlanError):
+            self.plan.make_plan("goal", CFG, Path(tempfile.mkdtemp()), ask=ask, retries=1, log=lambda m: None)
+        self.assertEqual(len(calls), 2)
+
+    def test_insert_maps_refs_and_applies_classifier_floor(self):
+        db = store.connect(":memory:")
+        p = self.mutated(1, description="write tests for the login password reset flow")
+        ids = self.plan.insert(db, p)
+        rows = store.list_tasks(db)
+        self.assertEqual([r["id"] for r in rows], [i[0] for i in ids])
+        self.assertEqual(json.loads(rows[2]["depends_on"]), [rows[1]["id"]])
+        self.assertEqual((rows[1]["risk"], rows[1]["expect_red"]), ("high", 1))
+        self.assertEqual(rows[0]["kind"], "chore")
+
+    def test_insert_is_atomic(self):
+        db = store.connect(":memory:")
+        p = self.mutated()
+        p["tasks"][2]["complexity"] = "ZZ"  # slips past validate on purpose
+        with self.assertRaises(ValueError):
+            self.plan.insert(db, p)
+        self.assertEqual(store.list_tasks(db), [])
+
+    def test_project_context_reads_facts_without_llm(self):
+        d = Path(tempfile.mkdtemp())
+        (d / "package.json").write_text('{"scripts": {"test": "node --test"}}')
+        (d / "src").mkdir()
+        (d / "node_modules").mkdir()
+        ctx = self.plan.project_context(d)
+        self.assertIn("node --test", ctx)
+        self.assertIn("src/", ctx)
+        self.assertNotIn("node_modules", ctx)
+        self.assertIn("empty directory", self.plan.project_context(Path(tempfile.mkdtemp())))
+
+    def test_prompt_lists_domains_but_not_core(self):
+        pr = self.plan.build_prompt("build x", "ctx", self.domains, feedback="- bad thing")
+        self.assertIn("- marketing:", pr)
+        self.assertNotIn("- core:", pr)
+        self.assertIn("bad thing", pr)
+
+
+class PlanCommandTests(unittest.TestCase):
+    """The CLI wrapper: budget, approval and queue guards happen BEFORE any opus call."""
+    def setUp(self):
+        from unittest import mock
+        from ndc import cli, plan
+        self.cli, self.mock, self.plan = cli, mock, plan
+        self.db = store.connect(":memory:")
+        self.cwd = Path(tempfile.mkdtemp())
+        self.old = os.getcwd()
+        os.chdir(self.cwd)
+        u = self.cwd / "u.json"
+        u.write_text(json.dumps({"updated_at": datetime.now(timezone.utc).isoformat(), "windows": {
+            "session": {"used_pct": 10, "resets_at": None}}}))
+        self.cfg = json.loads(json.dumps(CFG))
+        self.cfg["usage"]["file"] = str(u)
+
+    def tearDown(self):
+        os.chdir(self.old)
+
+    def go(self, **kw):
+        a = dict(goal="g", yes=True, activate=True, retries=1, ignore_usage=False, append=False)
+        a.update(kw)
+        return self.cli._plan(a["goal"], self.cfg, self.db, a["yes"], a["activate"], a["retries"],
+                              a["ignore_usage"], a["append"])
+
+    def test_writes_queue_and_activates_domains(self):
+        with self.mock.patch.object(self.plan, "make_plan", return_value=GOOD_PLAN):
+            self.assertTrue(self.go())
+        self.assertEqual(len(store.list_tasks(self.db)), 3)
+        self.assertTrue((self.cwd / ".claude/agents/po.md").exists())
+        self.assertTrue((self.cwd / ".claude/agents/python-reviewer.md").exists())
+
+    def test_refuses_when_queue_has_pending_tasks(self):
+        store.add_task(self.db, "old")
+        with self.mock.patch.object(self.plan, "make_plan") as m:
+            with self.assertRaises(ValueError):
+                self.go()
+            m.assert_not_called()
+
+    def test_refuses_without_yes_when_not_a_terminal(self):
+        with self.mock.patch.object(self.plan, "make_plan") as m, self.mock.patch("sys.stdin.isatty", return_value=False):
+            with self.assertRaises(ValueError):
+                self.go(yes=False)
+            m.assert_not_called()
+
+    def test_refuses_when_budget_is_gone(self):
+        Path(self.cfg["usage"]["file"]).write_text(json.dumps({
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "windows": {"session": {"used_pct": 97, "resets_at": None}}}))
+        with self.mock.patch.object(self.plan, "make_plan") as m:
+            with self.assertRaises(ValueError):
+                self.go()
+            m.assert_not_called()
+
+    def test_refuses_when_usage_unknown_unless_overridden(self):
+        self.cfg["usage"]["file"] = str(self.cwd / "missing.json")
+        with self.mock.patch.object(self.plan, "make_plan", return_value=GOOD_PLAN) as m:
+            with self.assertRaises(ValueError):
+                self.go()
+            m.assert_not_called()
+            self.assertTrue(self.go(ignore_usage=True))
+
+    def test_user_can_decline_in_a_terminal(self):
+        with self.mock.patch.object(self.plan, "make_plan", return_value=GOOD_PLAN), \
+                self.mock.patch("sys.stdin.isatty", return_value=True), self.mock.patch("builtins.input", return_value="n"):
+            self.assertFalse(self.go(yes=False))
+        self.assertEqual(store.list_tasks(self.db), [])
+        self.assertFalse((self.cwd / ".claude").exists())
+
+    def test_activation_conflict_leaves_the_queue_empty(self):
+        (self.cwd / ".claude/agents").mkdir(parents=True)
+        (self.cwd / ".claude/agents/planner.md").write_text("mine")
+        with self.mock.patch.object(self.plan, "make_plan", return_value=GOOD_PLAN):
+            with self.assertRaises(FileExistsError):
+                self.go()
+        self.assertEqual(store.list_tasks(self.db), [])
 
 
 def _git(cwd, *a):

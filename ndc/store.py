@@ -43,7 +43,7 @@ def connect(path=None) -> sqlite3.Connection:
 
 
 def add_task(db, title, description="", complexity="M", kind="work", depends_on=(),
-             risk="low", verify_cmd=None, expect_red=False):
+             risk="low", verify_cmd=None, expect_red=False, commit=True):
     if complexity not in COMPLEXITIES:
         raise ValueError(f"complexity must be one of {COMPLEXITIES}")
     if kind not in KINDS:
@@ -61,7 +61,8 @@ def add_task(db, title, description="", complexity="M", kind="work", depends_on=
         " VALUES(?,?,?,?,?,?,?,?,?)",
         (title, description, kind, complexity, json.dumps(list(depends_on)), risk, verify_cmd, int(expect_red), now()),
     )
-    db.commit()
+    if commit:
+        db.commit()
     return cur.lastrowid
 
 

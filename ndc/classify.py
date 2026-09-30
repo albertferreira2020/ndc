@@ -7,10 +7,15 @@ from __future__ import annotations
 import re
 
 ORDER = ["S", "M", "L", "XL"]
-RISK_WORDS = ("auth", "login", "password", "token", "secret", "crypto", "payment", "billing", "permission",
-              "security", "migration", "schema", "delete", "drop ", "concurren", "race condition", "deploy",
-              "autentic", "senha", "pagamento", "cobran", "permiss", "segurança", "seguranca", "migra", "apagar",
-              "exclu", "concorr", "implanta")
+# Whole-word patterns: "tokenize" (NLP) or "author" (docs) must not look like security work.
+RISK_RE = re.compile("|".join([
+    r"\bauth(?:entic\w*|oriz\w*)?\b", r"\blogin\b", r"\bpasswords?\b", r"\btokens?\b", r"\bsecrets?\b",
+    r"\bcrypto\w*", r"\bpayments?\b", r"\bbilling\b", r"\bpermissions?\b", r"\bsecurity\b",
+    r"\bmigrations?\b", r"\bschemas?\b", r"\bdelete\b", r"\bdrop\s+table\b", r"\bconcurren\w+",
+    r"\brace\s+condition", r"\bdeploy\w*",
+    r"\bautentic\w+", r"\bsenhas?\b", r"\bpagamentos?\b", r"\bcobran\w+", r"\bpermiss\w+",
+    r"\bseguran\w+", r"\bmigra\w+", r"\bapagar\b", r"\bexclu\w+", r"\bconcorr\w+", r"\bimplanta\w*",
+]), re.I)
 BIG_WORDS = ("refactor", "migrate", "redesign", "architecture", "rewrite", "integrate", "across",
              "refator", "reescrev", "arquitetura", "integra")
 PATH_RE = re.compile(r"[\w./-]+\.\w{1,5}\b")
@@ -33,10 +38,10 @@ def assess(title: str, desc: str = "", complexity: str | None = None):
         floor, reasons = _max(floor, "L"), reasons + ["structural keyword -> at least L"]
     if len(desc) > 1200:
         floor, reasons = _max(floor, "M"), reasons + ["long description -> at least M"]
-    hits = [w.strip() for w in RISK_WORDS if w in text]
-    risk = "high" if hits else "low"
-    if hits:
-        floor, reasons = _max(floor, "M"), reasons + [f"risk keyword ({hits[0]}) -> at least M, never junior for work"]
+    hit = RISK_RE.search(text)
+    risk = "high" if hit else "low"
+    if hit:
+        floor, reasons = _max(floor, "M"), reasons + [f"risk keyword ({hit.group(0)}) -> at least M, never junior for work"]
     final = _max(complexity, floor) if complexity else floor if floor != "S" else "M"
     if complexity and final != complexity:
         reasons.append(f"raised {complexity} -> {final}")
