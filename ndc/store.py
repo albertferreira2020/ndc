@@ -18,8 +18,12 @@ CREATE TABLE IF NOT EXISTS tasks(
   status TEXT NOT NULL DEFAULT 'pending',
   failures INTEGER NOT NULL DEFAULT 0,
   risk TEXT NOT NULL DEFAULT 'low', verify_cmd TEXT, expect_red INTEGER NOT NULL DEFAULT 0,
+  may_edit_tests INTEGER NOT NULL DEFAULT 0, last_report TEXT NOT NULL DEFAULT '', files_touched TEXT NOT NULL DEFAULT '[]',
   tier TEXT, model TEXT, notes TEXT NOT NULL DEFAULT '',
   created_at TEXT, started_at TEXT, finished_at TEXT
+);
+CREATE TABLE IF NOT EXISTS protected(
+  path TEXT PRIMARY KEY, task_id INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS runs(
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,11 +43,22 @@ def connect(path=None) -> sqlite3.Connection:
     db = sqlite3.connect(path or state_dir() / "ndc.db")
     db.row_factory = sqlite3.Row
     db.executescript(SCHEMA)
+    _migrate(db)
     return db
 
 
+def _migrate(db) -> None:
+    """Databases made by older versions keep their queue: add the columns they lack."""
+    cols = {r["name"] for r in db.execute("PRAGMA table_info(tasks)")}
+    for name, ddl in (("may_edit_tests", "INTEGER NOT NULL DEFAULT 0"), ("last_report", "TEXT NOT NULL DEFAULT ''"),
+                      ("files_touched", "TEXT NOT NULL DEFAULT '[]'")):
+        if name not in cols:
+            db.execute(f"ALTER TABLE tasks ADD COLUMN {name} {ddl}")
+    db.commit()
+
+
 def add_task(db, title, description="", complexity="M", kind="work", depends_on=(),
-             risk="low", verify_cmd=None, expect_red=False, commit=True):
+             risk="low", verify_cmd=None, expect_red=False, commit=True, may_edit_tests=False):
     if complexity not in COMPLEXITIES:
         raise ValueError(f"complexity must be one of {COMPLEXITIES}")
     if kind not in KINDS:
@@ -57,9 +72,10 @@ def add_task(db, title, description="", complexity="M", kind="work", depends_on=
     if bad:
         raise ValueError(f"unknown dependency ids: {bad}")
     cur = db.execute(
-        "INSERT INTO tasks(title,description,kind,complexity,depends_on,risk,verify_cmd,expect_red,created_at)"
-        " VALUES(?,?,?,?,?,?,?,?,?)",
-        (title, description, kind, complexity, json.dumps(list(depends_on)), risk, verify_cmd, int(expect_red), now()),
+        "INSERT INTO tasks(title,description,kind,complexity,depends_on,risk,verify_cmd,expect_red,may_edit_tests,created_at)"
+        " VALUES(?,?,?,?,?,?,?,?,?,?)",
+        (title, description, kind, complexity, json.dumps(list(depends_on)), risk, verify_cmd, int(expect_red),
+         int(may_edit_tests), now()),
     )
     if commit:
         db.commit()
@@ -85,13 +101,14 @@ def start(db, task_id, tier, model):
     db.commit()
 
 
-def finish(db, task_id, ok, deltas=None, notes=""):
+def finish(db, task_id, ok, deltas=None, notes="", report="", touched=()):
     t = get(db, task_id)
+    merged = sorted(set(json.loads(t["files_touched"])) | set(touched))  # across attempts: a retry may change nothing new
     failures = t["failures"] + (0 if ok else 1)
     status = "done" if ok else "pending"
     db.execute(
-        "UPDATE tasks SET status=?,failures=?,notes=?,finished_at=? WHERE id=?",
-        (status, failures, notes or t["notes"], now(), task_id),
+        "UPDATE tasks SET status=?,failures=?,notes=?,last_report=?,files_touched=?,finished_at=? WHERE id=?",
+        (status, failures, notes or t["notes"], "" if ok else report, json.dumps(merged), now(), task_id),
     )
     db.execute(
         "INSERT INTO runs(task_id,complexity,kind,tier,ok,deltas,at) VALUES(?,?,?,?,?,?,?)",
@@ -126,3 +143,13 @@ def success_rate(db, kind: str, complexity: str, tier: str) -> tuple[int, float]
     rows = db.execute("SELECT ok FROM runs WHERE kind=? AND complexity=? AND tier=?", (kind, complexity, tier)).fetchall()
     n = len(rows)
     return n, (sum(r["ok"] for r in rows) / n if n else 1.0)
+
+
+def protect(db, task_id: int, paths) -> None:
+    """Files a finished test task wrote: later non-test tasks may not modify them."""
+    db.executemany("INSERT OR REPLACE INTO protected(path,task_id) VALUES(?,?)", [(p, task_id) for p in paths])
+    db.commit()
+
+
+def protected(db) -> set:
+    return {r["path"] for r in db.execute("SELECT path FROM protected")}

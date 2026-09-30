@@ -148,9 +148,9 @@ def validate(plan: dict, domains: dict) -> list[str]:
     return errs
 
 
-def ask_claude(prompt: str, cfg: dict, cwd: Path) -> str:
-    """One headless PO call. Read-only tools; never the runner's edit permissions."""
-    cmd = ["claude", "-p", prompt, "--model", cfg["models"]["po"], "--allowedTools", "Read Grep Glob"]
+def ask_claude(prompt: str, cfg: dict, cwd: Path, model: str | None = None) -> str:
+    """One headless read-only call (PO by default). Never the runner's edit permissions."""
+    cmd = ["claude", "-p", prompt, "--model", model or cfg["models"]["po"], "--allowedTools", "Read Grep Glob"]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, timeout=cfg.get("plan_timeout_seconds", 900))
     except (subprocess.TimeoutExpired, FileNotFoundError) as e:

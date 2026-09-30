@@ -7,7 +7,9 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import store
+from dataclasses import dataclass
+
+from . import plan as planner, quality, snapshot, store
 from .config import state_dir
 from .guardian import decide, outlook
 from .handoff import write as write_handoff
@@ -31,6 +33,9 @@ def build_prompt(task) -> str:
         f = briefs_dir() / f"task-{dep}.md"
         if f.exists():
             parts.append(f"Context from task #{dep} (already done, do not redo it):\n{f.read_text()[:BRIEF_CAP]}")
+    if task["last_report"]:
+        parts.append("This is a RETRY in a fresh session. The working tree still holds the previous attempt's changes. "
+                     "Report of that attempt:\n" + task["last_report"][:3000])
     if task["verify_cmd"]:
         goal = "must FAIL (the tests are written before the implementation)" if task["expect_red"] else "must pass"
         parts.append(f"Verification command: `{task['verify_cmd']}` {goal}.")
@@ -53,6 +58,105 @@ def verify(task, timeout) -> tuple[bool, str]:
             return False, "tests passed before any implementation: they check nothing (expected red)"
         return True, f"red as expected: {tail}"
     return (r.returncode == 0), (tail if r.returncode else "verified")
+
+
+@dataclass
+class Outcome:
+    ok: bool
+    note: str
+    report: str  # seeds the next attempt when this one failed
+    out: str
+    touched: tuple = ()
+
+
+def _claude(task, model, cfg, timeout):
+    try:
+        r = subprocess.run(["claude", "-p", build_prompt(task), "--model", model, *cfg.get("claude_args", [])],
+                           capture_output=True, text=True, timeout=timeout)
+        return r.returncode == 0, (r.stdout if r.returncode == 0 else r.stderr)
+    except (subprocess.TimeoutExpired, FileNotFoundError) as e:
+        return False, str(e)
+
+
+def _review_allowed(cfg, db) -> bool:
+    try:
+        us = read_usage(cfg)
+    except UsageUnavailable:
+        return False
+    return decide(us, "S", cfg, lambda w, c: store.history(db, w, c)).action != "STOP"
+
+
+def execute_task(db, cfg, task, tier, model, timeout, log=print, root=None, ask=None) -> Outcome:
+    """Dispatch one task in a fresh session, then apply the gates, cheapest first:
+    verify -> read-only/protected files -> regression -> scoped review."""
+    root = root or Path.cwd()
+    q, kind = cfg.get("quality", {}), task["kind"]
+    vt = cfg.get("verify_timeout_seconds", 900)
+    checks = []
+    if kind == "work":
+        checks = q.get("checks") or (quality.detect_checks(root) if q.get("auto_checks", True) else [])
+    baseline = quality.run_checks(checks, root, vt)[0] if checks else None
+    before = snapshot.take(root)
+
+    ok, out = _claude(task, model, cfg, timeout)
+    after = snapshot.take(root)
+    ch = snapshot.diff(before, after) if before is not None and after is not None else None
+    touched = sorted(ch["added"] | ch["changed"] | ch["removed"]) if ch else []
+    all_touched = sorted(set(json.loads(task["files_touched"])) | set(touched))  # every attempt, for the review
+    files = f"Changed files: {', '.join(all_touched[:20]) or '(none)'}\n"
+
+    def fail(gate: str, why: str) -> Outcome:
+        log(f"  gate '{gate}' failed: {why.strip().splitlines()[0][:160] if why.strip() else ''}")
+        return Outcome(False, f"[{gate}] {why}"[:500], f"Attempt by {tier}/{model} failed at gate '{gate}':\n{why[:1200]}\n"
+                       f"{files}Its final message:\n{out[:1200]}", out, tuple(touched))
+
+    if not ok:
+        return fail("dispatch", out[-500:])
+    ok, vnote = verify(task, vt)
+    if not ok:
+        return fail("verify", vnote)
+    note = vnote
+    if ch is None:
+        log("  warning: project too large to track file changes; read-only and protected-file gates skipped")
+    else:
+        if kind in q.get("readonly_kinds", ["explore", "plan"]) and touched:
+            return fail("read-only", f"a {kind} task must not modify files, but changed: {', '.join(touched[:10])}")
+        if q.get("protect_tests", True) and kind != "test" and not task["may_edit_tests"]:
+            hit = sorted((ch["changed"] | ch["removed"]) & store.protected(db))
+            if hit:
+                return fail("protected-files", "it edited test files written by an earlier test task (fix the code, "
+                            f"not the tests): {', '.join(hit[:10])}")
+    if checks and baseline:
+        good, tail = quality.run_checks(checks, root, vt)
+        if not good:
+            return fail("regression", "project checks were green before this task and are red now: " + tail)
+    elif checks and baseline is False:
+        log("  project checks were already failing before this task: regression gate skipped")
+    mode = q.get("review", "risk")
+    if kind == "work" and all_touched and (mode == "all" or (mode == "risk" and (
+            task["risk"] == "high" or task["complexity"] in ("L", "XL")))):
+        if not _review_allowed(cfg, db):
+            log("  review skipped: no budget headroom or usage unknown")
+            note += " | review skipped (budget)"
+        else:
+            try:
+                raw = (ask or planner.ask_claude)(quality.review_prompt(task, all_touched), cfg, root, cfg["models"]["senior"])
+                issues = quality.parse_review(raw)
+            except planner.PlanError as e:
+                log(f"  review unavailable ({e}); not blocking")
+                note += " | review unavailable"
+            else:
+                blockers = [i for i in issues if i["severity"] == "blocker"]
+                if blockers:
+                    return fail("review", quality.format_issues(issues))
+                if issues:
+                    log("  review notes (not blocking):\n" + quality.format_issues(issues))
+                    note += f" | review: {len(issues)} non-blocking issue(s)"
+                else:
+                    note += " | review: clean"
+    if kind == "test" and ch:
+        store.protect(db, task["id"], sorted(ch["added"] | ch["changed"]))
+    return Outcome(True, f"{note}\n{out[-500:]}".strip(), "", out, tuple(touched))
 
 
 def _deltas(before, after):
@@ -115,6 +219,7 @@ def run(db, cfg, execute=False, ignore_usage=False, wait=False, timeout=3600, lo
         if task is None:
             log(f"STOP: {d.reason}")
             log(f"handoff written: {write_handoff(db, reason=d.reason)}")
+            log("  to continue in a fresh interactive session seeded with it: ndc session")
             if d.resume_at:
                 log(f"limit resets at {d.resume_at.isoformat()}")
             if not (wait and d.resume_at):
@@ -131,16 +236,8 @@ def run(db, cfg, execute=False, ignore_usage=False, wait=False, timeout=3600, lo
             seen.add(task["id"])
             continue
         store.start(db, task["id"], tier, model)
-        try:
-            r = subprocess.run(["claude", "-p", build_prompt(task), "--model", model, *cfg.get("claude_args", [])],
-                               capture_output=True, text=True, timeout=timeout)
-            ok, out = r.returncode == 0, (r.stdout if r.returncode == 0 else r.stderr)
-        except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-            ok, out = False, str(e)
-        note = out[-500:]
-        if ok:
-            ok, vnote = verify(task, cfg.get("verify_timeout_seconds", 900))
-            note = f"{vnote}\n{note}".strip()
+        res = execute_task(db, cfg, task, tier, model, timeout, log)
+        ok, note, out = res.ok, res.note, res.out
         if ok and task["kind"] in BRIEF_KINDS:
             (briefs_dir() / f"task-{task['id']}.md").write_text(out[:BRIEF_CAP])
         after = None
@@ -148,9 +245,9 @@ def run(db, cfg, execute=False, ignore_usage=False, wait=False, timeout=3600, lo
             after = read_usage(cfg, refresh=True)
         except UsageUnavailable:
             pass
-        store.finish(db, task["id"], ok, _deltas(usage, after), note)
+        store.finish(db, task["id"], ok, _deltas(usage, after), note, res.report, res.touched)
         if not ok:
             t = store.get(db, task["id"])
-            log(f"  failed ({t['failures']}x), will retry one tier up: {note[:120]}")
+            log(f"  failed ({t['failures']}x); the retry goes one tier up, in a fresh session seeded with the attempt report")
             if t["failures"] >= MAX_FAILURES:
                 store.block(db, task["id"], f"failed {t['failures']} times: {note[:200]}")

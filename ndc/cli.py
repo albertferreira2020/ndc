@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import shlex
 import sys
 from pathlib import Path
 
-from . import activator, classify, handoff, plan as planner, runner, store
+from . import activator, classify, handoff, plan as planner, quality, runner, store
 from .config import load_config
 from .guardian import decide
 from .router import route
@@ -59,6 +61,7 @@ def main(argv=None) -> int:
     ta.add_argument("--depends", default="")
     ta.add_argument("--verify", help="gate command; must pass (or fail, with --expect-red)")
     ta.add_argument("--expect-red", action="store_true", help="for test tasks: command must fail before implementation")
+    ta.add_argument("--may-edit-tests", action="store_true", help="allow this task to modify test files written by earlier test tasks")
     tl = ts.add_parser("list")
     tl.add_argument("--status")
 
@@ -77,6 +80,10 @@ def main(argv=None) -> int:
     h.add_argument("--notes", default="")
     h.add_argument("--reason", default="")
     sub.add_parser("resume-prompt", help="print the latest handoff as a session prompt")
+    se = sub.add_parser("session", help="open a NEW interactive Claude session seeded with a fresh handoff")
+    se.add_argument("--model", help="default: the senior model from the config")
+    se.add_argument("--print", action="store_true", help="only print the prompt and the command")
+    sub.add_parser("checks", help="show the project checks NDC runs as a regression gate")
 
     r = sub.add_parser("run", help="run the queue (dry run unless --execute)")
     r.add_argument("--execute", action="store_true", help="dispatch tasks to `claude -p`")
@@ -192,7 +199,7 @@ def _dispatch(args, cfg) -> int:
         if args.tcmd == "add":
             cx, risk, why = classify.assess(args.title, args.desc, args.complexity)
             tid = store.add_task(db, args.title, args.desc, cx, args.kind, [int(x) for x in _csv(args.depends)],
-                                 risk, args.verify, args.expect_red)
+                                 risk, args.verify, args.expect_red, may_edit_tests=args.may_edit_tests)
             print(f"task #{tid} added: {args.kind}/{cx}/risk={risk}")
             for w in why:
                 print(f"  classifier: {w}")
@@ -220,6 +227,22 @@ def _dispatch(args, cfg) -> int:
     if args.cmd == "handoff":
         print(handoff.write(db, args.notes, args.reason))
         return 0
+    if args.cmd == "checks":
+        q = cfg.get("quality", {})
+        cmds = q.get("checks") or (quality.detect_checks(Path.cwd()) if q.get("auto_checks", True) else [])
+        print("\n".join(cmds) if cmds else "no checks found (set quality.checks in ndc.config.json)")
+        print(f"review: {q.get('review', 'risk')} | protect_tests: {q.get('protect_tests', True)} | "
+              f"read-only kinds: {', '.join(q.get('readonly_kinds', ['explore', 'plan']))}")
+        return 0
+    if args.cmd == "session":
+        path = handoff.write(db, reason="new session requested")  # always regenerate: the queue may have moved
+        prompt = "Continue the work described in this handoff. Start by reading it fully.\n\n" + path.read_text()
+        cmd = ["claude", "--model", args.model or cfg["models"]["senior"], prompt]
+        if args.print or not sys.stdin.isatty():
+            print(f"# {shlex.join(cmd[:3])} <the prompt below>\n{prompt}")
+            return 0
+        print(f"opening a new Claude session ({cmd[2]}) with {path}")
+        os.execvp("claude", cmd)
     if args.cmd == "resume-prompt":
         latest = Path.cwd() / ".ndc" / "handoff" / "latest.md"
         if not latest.exists():

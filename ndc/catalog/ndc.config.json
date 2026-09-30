@@ -23,5 +23,16 @@
     "min_success_rate": 0.7
   },
   "verify_timeout_seconds": 900,
-  "claude_args": []
+  "claude_args": [],
+  "quality": {
+    "auto_checks": true,
+    "checks": null,
+    "protect_tests": true,
+    "readonly_kinds": [
+      "explore",
+      "plan"
+    ],
+    "review": "risk",
+    "review_timeout_seconds": 600
+  }
 }

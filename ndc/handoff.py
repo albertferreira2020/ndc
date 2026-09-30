@@ -26,6 +26,8 @@ def build(db, notes: str = "", reason: str = "") -> str:
         tag = "ready" if t["id"] in ready else f"waits on {t['depends_on']}"
         extra = f" - {t['failures']} failed attempt(s)" if t["failures"] else ""
         out.append(f"{line(t)} ({tag}){extra}")
+        if t["last_report"]:
+            out.append("    last attempt: " + " ".join(t["last_report"].split())[:400])
     if not by("pending"):
         out.append("- (nothing pending)")
     out += ["", "## Notes from the session", notes.strip() or "(none provided)", "",

@@ -13,6 +13,8 @@ NDC builds on [ECC](https://github.com/affaan-m/ECC) (vendored, unmodified, in `
 | **Classifier** (`ndc/classify.py`) | Free, deterministic floor for complexity and risk (whole-word risk terms in English and Portuguese, file count). The PO can raise a task, never lower it below the floor. |
 | **Routing** (`ndc/router.py`, `ndc/catalog/core/agents/po.md`) | By kind, risk and complexity: explore/docs/chore/test go to haiku, M/L work and anything high-risk to sonnet, planning and XL to opus. A failure moves the task up one tier; a class where haiku succeeds under 70% (5+ runs) is moved up automatically. |
 | **Gates** (`--verify`, `--expect-red`) | A task only counts as done if its command passes. Haiku-written tests must fail first, so vacuous tests are rejected. Cheap models fail cheaply. |
+| **Quality gates** (`ndc/quality.py`, `ndc/snapshot.py`) | Beyond `--verify`: project regression checks, protected test files, read-only tasks, and a scoped model review for risky work. See below. |
+| **Fresh sessions** | Every attempt runs in a new session; a retry is seeded with a report of the failed attempt. `ndc session` opens a new interactive session seeded with the handoff. |
 | **Briefs** | Haiku explore/test output is injected into dependent tasks so the expensive model does not re-read the codebase. |
 | **Handoff** (`ndc/handoff.py`) | On a stop, writes done / pending / blocked / notes so a fresh session starts with context. |
 | **Runner** (`ndc/runner.py`) | Loop: guard, pick the first task that fits, dispatch via `claude -p --model <m>`, record the usage delta, repeat. On STOP it writes the handoff and can sleep until the reset (`--wait`). |
@@ -21,11 +23,11 @@ NDC builds on [ECC](https://github.com/affaan-m/ECC) (vendored, unmodified, in `
 
 ```bash
 python3 -m venv ~/.ndc-venv
-~/.ndc-venv/bin/pip install ndc-0.3.0-py3-none-any.whl     # the whole catalog is inside the package
+~/.ndc-venv/bin/pip install ndc-0.4.0-py3-none-any.whl     # the whole catalog is inside the package
 ln -s ~/.ndc-venv/bin/ndc ~/.local/bin/ndc                 # optional: `ndc` on your PATH
 ```
 
-(`pipx install ndc-0.3.0-py3-none-any.whl` works too.) Python 3.9+, standard library only.
+(`pipx install ndc-0.4.0-py3-none-any.whl` works too.) Python 3.9+, standard library only.
 
 ## Quick start (inside any project)
 
@@ -77,6 +79,28 @@ NDC is a support tool, not part of the product. In a project it creates only:
 
 All of it is hidden from git through a marked block in `.git/info/exclude`: local, never committed, invisible to teammates, and it lists exactly the NDC paths, so your own files in `.claude/` are not ignored. Use `--gitignore` to write the block to the project's `.gitignore` instead. NDC refuses to overwrite agents or skills it did not create, warns if git already tracks an NDC file, and does nothing to the ignore rules if the folder is not a git repository. The rules in the block are rewritten on every `activate`; edit outside the markers.
 
+## Quality beyond `--verify`
+
+`--verify` checks one thing. After it passes, NDC applies more gates, cheapest first. A failure counts as a failed attempt and the retry goes one tier up.
+
+| Gate | What it catches | Cost |
+|---|---|---|
+| **Read-only tasks** | an `explore` or `plan` task that modified files | free |
+| **Protected test files** | a `work` task that "fixes" the tests instead of the code: files written by an earlier `test` task cannot be modified by later non-test tasks (`--may-edit-tests` lifts it for one task) | free |
+| **Regression** | a `work` task that breaks the rest of the project. NDC runs the project's own checks (found from `package.json` scripts `test`/`lint`/`typecheck`, Python tests, `go vet`/`go test`, `cargo test`; or set `quality.checks`) before and after. It only fails if they were green before, so test-first flows (tests written, implementation pending) do not trip it. `ndc checks` shows what it found. | free |
+| **Scoped review** | for `work` tasks with high risk or complexity L/XL, a read-only reviewer (senior model) reads the files the task touched, across all attempts, and looks for wrong behavior, security holes, gamed tests and swallowed errors. Only `blocker` issues fail the task; the rest are recorded in the task notes. Skipped if the budget has no headroom or usage is unknown. `quality.review`: `"risk"` (default), `"all"`, `"off"`. | one senior call, only where risk justifies it |
+
+File changes are tracked by hashing the project tree around each task (no git needed). Trees over 5,000 files are not tracked and the file gates are skipped with a warning.
+
+## New sessions
+
+Each task attempt already runs in a fresh headless session, so context never piles up across tasks. What carries over is explicit:
+- **Retries** get a report of the failed attempt: the gate that failed, its output, the files changed so far and the model's last message. The working tree keeps the previous attempt's changes.
+- **`ndc session`** writes a fresh handoff from the queue and opens a NEW interactive Claude session (senior model, `--model` to change) with it as the first prompt. `--print` only prints it. Use it after a stop, or when your interactive context has grown too long.
+- The handoff also shows the last failed attempt of each pending task.
+
+An interactive session that is already open cannot be replaced from outside: NDC does not watch it and does not swap it. `ndc session` is something you (or a script) invoke.
+
 ## When monitoring starts
 
 After every finished task the runner has a fresh `/usage` reading. It checks whether the remaining budget covers the whole pending queue (estimated per task, in queue order, all windows). The first time it does not, `MONITORING ON` is logged with how many tasks still fit and a handoff checkpoint is written, so context survives even if the session dies. From then on only tasks that fit are started; when none fits, the runner stops, writes the handoff and (with `--wait`) sleeps until the reset. The fixed 30% threshold still applies as a second trigger.
@@ -93,7 +117,7 @@ Alternatives: `usage.source: "file"` reads the same JSON from a file, fed by `nd
 
 ## Status
 
-v0.3. Implemented and covered by `python3 -m unittest discover -s tests` (82 tests): guardian and queue-wide budget monitoring, router, classifier, gates, handoff, activator and footprint control, runner, and the autonomous PO (`ndc plan`, `ndc run --goal`).
+v0.4. Implemented and covered by `python3 -m unittest discover -s tests` (97 tests): guardian and queue-wide budget monitoring, router, classifier, gates, handoff, activator and footprint control, runner, the autonomous PO (`ndc plan`, `ndc run --goal`), the quality gates and `ndc session`. The gates run against a fake `claude` in the tests, so no tokens are spent testing them.
 
 Proven on real runs: a 7-task project built by haiku and sonnet from a backlog written by hand, and a backlog written by the PO itself from a one-line goal (about 40 s). See the release notes for the end-to-end result of executing a PO-written backlog.
 
@@ -101,7 +125,8 @@ Not validated or not built:
 - Monitoring under a genuinely tight usage limit, and resuming after a reset (`--wait`): simulated tests only.
 - The PO has been tried on small goals only. On large or ambiguous goals it may produce weak backlogs; review them.
 - The verify blocklist is not a sandbox.
-- No scheduler: NDC runs only when you invoke it. No parallel tasks or worktrees (ECC's DevFleet is not wired in). It does not open a new interactive session by itself; `ndc resume-prompt` prints the handoff for that.
+- No scheduler: NDC runs only when you invoke it. No parallel tasks or worktrees (ECC's DevFleet is not wired in). It cannot swap an interactive session that is already open (see New sessions).
+- The quality gates are heuristics: passing them does not mean the code is correct. The reviewer is a model and can miss things or, rarely, flag good code; only blockers stop a task. Regression checks are only as good as the project's own tests.
 - Only the software domain has a complete team; the others are thin.
 - Tested on macOS with Python 3.9.
 

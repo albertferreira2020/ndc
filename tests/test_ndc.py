@@ -8,6 +8,7 @@ from pathlib import Path
 os.environ["NDC_STATE"] = tempfile.mkdtemp()
 
 from ndc import activator, classify, guardian, handoff, router, runner, store
+from ndc import plan as planner_mod
 from ndc.config import load_config
 from ndc.usage import UsageUnavailable, parse
 
@@ -635,6 +636,298 @@ class PlanCommandTests(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 self.go()
         self.assertEqual(store.list_tasks(self.db), [])
+
+
+FAKE_CLAUDE = r"""#!/usr/bin/env python3
+import json, os, re, sys
+spec = json.load(open(os.environ["FAKE_CLAUDE"]))
+prompt = sys.argv[2] if len(sys.argv) > 2 and sys.argv[1] == "-p" else ""
+log = spec["log"]
+if prompt.startswith("REVIEW."):
+    seen = [json.loads(l) for l in open(log)] if os.path.exists(log) else []
+    k = sum(1 for s in seen if s["id"] == "review")
+    open(log, "a").write(json.dumps({"id": "review", "prompt": prompt}) + "\n")
+    r = spec.get("review", '{"issues": []}')
+    print(r[min(k, len(r) - 1)] if isinstance(r, list) else r)
+    sys.exit(0)
+tid = re.search(r"Task #(\d+)", prompt).group(1)
+seen = [json.loads(l) for l in open(log)] if os.path.exists(log) else []
+n = sum(1 for s in seen if s["id"] == tid)
+open(log, "a").write(json.dumps({"id": tid, "prompt": prompt, "model": sys.argv[sys.argv.index("--model") + 1]}) + "\n")
+act = spec["tasks"].get(tid, {})
+if isinstance(act, list):
+    act = act[min(n, len(act) - 1)]
+for p, c in act.get("writes", {}).items():
+    os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
+    open(p, "w").write(c)
+for p in act.get("deletes", []):
+    os.remove(p)
+print(act.get("stdout", "done"))
+sys.exit(act.get("rc", 0))
+"""
+
+
+class GateHarness(unittest.TestCase):
+    """Runs the real runner against a fake `claude` on PATH: no tokens spent."""
+    def setUp(self):
+        from unittest import mock
+        self.mock = mock
+        self.proj = Path(tempfile.mkdtemp())
+        self.bin = Path(tempfile.mkdtemp())
+        (self.bin / "claude").write_text(FAKE_CLAUDE)
+        (self.bin / "claude").chmod(0o755)
+        self.log = self.bin / "calls.jsonl"
+        self.spec = self.bin / "spec.json"
+        self.env = self.mock.patch.dict(os.environ, {"PATH": f"{self.bin}:{os.environ['PATH']}", "FAKE_CLAUDE": str(self.spec),
+                                                     "NDC_STATE": str(self.proj / ".ndc")})
+        self.env.start()
+        self.old = os.getcwd()
+        os.chdir(self.proj)
+        u = self.proj / "usage.json"
+        u.write_text(json.dumps({"updated_at": datetime.now(timezone.utc).isoformat(), "windows": {
+            "session": {"used_pct": 10, "resets_at": None}}}))
+        self.cfg = json.loads(json.dumps(CFG))
+        self.cfg["usage"]["file"] = str(u)
+        self.cfg["quality"]["auto_checks"] = False
+        self.db = store.connect(":memory:")
+
+    def tearDown(self):
+        os.chdir(self.old)
+        self.env.stop()
+
+    def script(self, tasks, review=None):
+        self.spec.write_text(json.dumps({"log": str(self.log), "tasks": tasks, **({"review": review} if review else {})}))
+
+    def go(self):
+        out = []
+        runner.run(self.db, self.cfg, execute=True, log=out.append)
+        return out
+
+    def calls(self, who=None):
+        rows = [json.loads(l) for l in self.log.read_text().splitlines()] if self.log.exists() else []
+        return [r for r in rows if who is None or r["id"] == str(who)]
+
+    def row(self, i):
+        return store.get(self.db, i)
+
+
+class GateTests(GateHarness):
+    def test_work_task_cannot_edit_protected_tests_and_retry_gets_the_report(self):
+        t = store.add_task(self.db, "write tests", kind="test", complexity="S")
+        w = store.add_task(self.db, "implement", kind="work", complexity="S", depends_on=[t])
+        self.script({str(t): {"writes": {"tests/t.txt": "expect 3"}},
+                     str(w): [{"writes": {"tests/t.txt": "expect anything"}},          # cheats: edits the test
+                              {"writes": {"src/impl.txt": "real work"}}]})
+        out = self.go()
+        self.assertEqual((self.row(t)["status"], self.row(w)["status"]), ("done", "done"))
+        self.assertEqual(self.row(w)["failures"], 1)
+        self.assertTrue(any("gate 'protected-files' failed" in l for l in out))
+        retry = self.calls(w)[1]["prompt"]
+        self.assertIn("RETRY in a fresh session", retry)
+        self.assertIn("protected-files", retry)
+        self.assertIn("tests/t.txt", retry)
+        self.assertEqual((self.proj / "tests/t.txt").read_text(), "expect anything")  # tree keeps the attempt
+
+    def test_may_edit_tests_lifts_the_protection(self):
+        t = store.add_task(self.db, "write tests", kind="test", complexity="S")
+        w = store.add_task(self.db, "fix the test", kind="work", complexity="S", depends_on=[t], may_edit_tests=True)
+        self.script({str(t): {"writes": {"tests/t.txt": "a"}}, str(w): {"writes": {"tests/t.txt": "b"}}})
+        self.go()
+        self.assertEqual(self.row(w)["failures"], 0)
+
+    def test_failed_test_task_protects_nothing(self):
+        t = store.add_task(self.db, "write tests", kind="test", complexity="S", verify_cmd="false")
+        self.script({str(t): {"writes": {"tests/t.txt": "a"}}})
+        self.cfg["escalate_after_failures"] = 1
+        self.go()  # fails until blocked
+        self.assertEqual(store.protected(self.db), set())
+
+    def test_readonly_kind_may_not_modify_files(self):
+        e = store.add_task(self.db, "map the code", kind="explore", complexity="S")
+        self.script({str(e): [{"writes": {"notes.md": "x"}}, {"stdout": "brief only"}]})
+        out = self.go()
+        self.assertTrue(any("'read-only' failed" in l for l in out))
+        self.assertEqual((self.row(e)["status"], self.row(e)["failures"]), ("done", 1))
+
+    def test_regression_gate_only_when_baseline_was_green(self):
+        chk = "python3 -c \"import sys;sys.exit(0 if open('state.txt').read().strip()=='ok' else 1)\""
+        self.cfg["quality"]["checks"] = [chk]
+        (self.proj / "state.txt").write_text("ok")
+        w = store.add_task(self.db, "add feature", kind="work", complexity="S")
+        self.script({str(w): [{"writes": {"state.txt": "broken"}}, {"writes": {"feature.txt": "f"}}]})
+        out = self.go()
+        self.assertTrue(any("'regression' failed" in l for l in out))
+        self.assertEqual((self.row(w)["status"], self.row(w)["failures"]), ("done", 1))
+        self.assertIn("gate 'regression'", self.calls(w)[1]["prompt"])
+        self.assertIn("green before this task", self.calls(w)[1]["prompt"])
+
+    def test_red_baseline_skips_the_regression_gate(self):
+        self.cfg["quality"]["checks"] = ["false"]  # already red: e.g. tests written first, implementation pending
+        w = store.add_task(self.db, "implement", kind="work", complexity="S")
+        self.script({str(w): {"writes": {"a.txt": "a"}}})
+        out = self.go()
+        self.assertEqual(self.row(w)["failures"], 0)
+        self.assertTrue(any("regression gate skipped" in l for l in out))
+
+
+class ReviewGateTests(GateHarness):
+    BLOCKER = '```json\n{"issues": [{"severity": "blocker", "file": "a.txt", "problem": "hardcodes the expected value"}]}\n```'
+
+    def test_blocker_fails_then_clean_review_passes(self):
+        w = store.add_task(self.db, "add auth check", kind="work", complexity="M", risk="high")
+        self.script({str(w): {"writes": {"a.txt": "x"}}}, review=[self.BLOCKER, '{"issues": []}'])
+        out = self.go()
+        self.assertEqual((self.row(w)["status"], self.row(w)["failures"]), ("done", 1))
+        self.assertTrue(any("gate 'review' failed" in l for l in out))
+        self.assertIn("hardcodes the expected value", self.calls(w)[1]["prompt"])
+        self.assertEqual(len(self.calls("review")), 2)
+        self.assertIn("HIGH RISK", self.calls("review")[0]["prompt"])
+
+    def test_non_blocking_issues_pass_and_are_recorded(self):
+        w = store.add_task(self.db, "add auth check", kind="work", complexity="M", risk="high")
+        self.script({str(w): {"writes": {"a.txt": "x"}}},
+                    review='{"issues": [{"severity": "major", "file": "a.txt", "problem": "no input validation"}]}')
+        self.go()
+        self.assertEqual(self.row(w)["failures"], 0)
+        self.assertIn("non-blocking", self.row(w)["notes"])
+
+    def test_unparsable_review_does_not_block(self):
+        w = store.add_task(self.db, "add auth check", kind="work", complexity="M", risk="high")
+        self.script({str(w): {"writes": {"a.txt": "x"}}}, review="looks fine to me!")
+        self.go()
+        self.assertEqual((self.row(w)["status"], self.row(w)["failures"]), ("done", 0))
+        self.assertIn("review unavailable", self.row(w)["notes"])
+
+    def test_low_risk_small_work_is_not_reviewed(self):
+        w = store.add_task(self.db, "rename a variable", kind="work", complexity="S")
+        self.script({str(w): {"writes": {"a.txt": "x"}}})
+        self.go()
+        self.assertEqual(self.calls("review"), [])
+
+    def test_large_work_is_reviewed_and_review_off_disables_it(self):
+        w = store.add_task(self.db, "big change", kind="work", complexity="L")
+        self.script({str(w): {"writes": {"a.txt": "x"}}})
+        self.go()
+        self.assertEqual(len(self.calls("review")), 1)
+        self.log.unlink()
+        self.cfg["quality"]["review"] = "off"
+        w2 = store.add_task(self.db, "another big change", kind="work", complexity="L")
+        self.script({str(w2): {"writes": {"b.txt": "x"}}})
+        self.go()
+        self.assertEqual(self.calls("review"), [])
+
+    def test_review_skipped_without_budget_headroom(self):
+        w = store.add_task(self.db, "add auth check", kind="work", complexity="S", risk="high")
+        self.script({str(w): {"writes": {"a.txt": "x"}}})
+        with self.mock.patch.object(runner, "_review_allowed", return_value=False):
+            out = self.go()
+        self.assertEqual(self.calls("review"), [])
+        self.assertTrue(any("review skipped" in l for l in out))
+        self.assertEqual(self.row(w)["status"], "done")
+
+    def test_review_budget_check_uses_the_guardian(self):
+        Path(self.cfg["usage"]["file"]).write_text(json.dumps({
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "windows": {"session": {"used_pct": 97, "resets_at": None}}}))
+        self.assertFalse(runner._review_allowed(self.cfg, self.db))
+        self.cfg["usage"]["file"] = str(self.proj / "missing.json")
+        self.assertFalse(runner._review_allowed(self.cfg, self.db))  # unknown usage: no extra spend
+
+    def test_review_covers_files_from_every_attempt(self):
+        w = store.add_task(self.db, "add auth check", kind="work", complexity="M", risk="high")
+        self.script({str(w): [{"writes": {"a.txt": "x"}}, {"writes": {"b.txt": "y"}}]}, review=[self.BLOCKER, '{"issues": []}'])
+        self.go()
+        files = self.calls("review")[1]["prompt"]
+        self.assertIn("- a.txt", files)  # touched in attempt 1, still reviewed after attempt 2
+        self.assertIn("- b.txt", files)
+
+
+class SessionAndSupportTests(unittest.TestCase):
+    def test_migration_keeps_an_old_queue(self):
+        import sqlite3
+        f = Path(tempfile.mkdtemp()) / "old.db"
+        old = sqlite3.connect(f)
+        old.executescript("""CREATE TABLE tasks(id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL,
+            description TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL DEFAULT 'work', complexity TEXT NOT NULL DEFAULT 'M',
+            depends_on TEXT NOT NULL DEFAULT '[]', status TEXT NOT NULL DEFAULT 'pending', failures INTEGER NOT NULL DEFAULT 0,
+            risk TEXT NOT NULL DEFAULT 'low', verify_cmd TEXT, expect_red INTEGER NOT NULL DEFAULT 0,
+            tier TEXT, model TEXT, notes TEXT NOT NULL DEFAULT '', created_at TEXT, started_at TEXT, finished_at TEXT);
+            CREATE TABLE runs(id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER NOT NULL, complexity TEXT NOT NULL,
+            kind TEXT NOT NULL, tier TEXT, ok INTEGER NOT NULL, deltas TEXT NOT NULL, at TEXT NOT NULL);
+            INSERT INTO tasks(title,status) VALUES('kept','done');""")
+        old.commit()
+        old.close()
+        db = store.connect(f)
+        t = store.get(db, 1)
+        self.assertEqual((t["title"], t["status"], t["last_report"], t["may_edit_tests"]), ("kept", "done", "", 0))
+        store.connect(f)  # idempotent
+
+    def test_session_print_carries_a_fresh_handoff(self):
+        import contextlib
+        import io
+        from ndc import cli
+        d = Path(tempfile.mkdtemp())
+        old = os.getcwd()
+        os.chdir(d)
+        try:
+            with __import__("unittest.mock").mock.patch.dict(os.environ, {"NDC_STATE": str(d / ".ndc")}):
+                db = store.connect()
+                a = store.add_task(db, "already done")
+                store.start(db, a, "senior", "sonnet")
+                store.finish(db, a, True)
+                store.add_task(db, "still to do")
+                db.close()
+                buf = io.StringIO()
+                with contextlib.redirect_stdout(buf):
+                    self.assertEqual(cli.main(["session", "--print"]), 0)
+        finally:
+            os.chdir(old)
+        out = buf.getvalue()
+        for s in ("claude --model sonnet", "already done", "still to do", "## Pending"):
+            self.assertIn(s, out)
+
+    def test_handoff_shows_the_last_failed_attempt(self):
+        db = store.connect(":memory:")
+        a = store.add_task(db, "flaky")
+        store.start(db, a, "junior", "haiku")
+        store.finish(db, a, False, report="Attempt failed at gate 'verify':\nexpected 3 got 4")
+        self.assertIn("last attempt: Attempt failed at gate 'verify': expected 3 got 4", handoff.build(db))
+
+    def test_detect_checks(self):
+        from ndc import quality
+        d = Path(tempfile.mkdtemp())
+        self.assertEqual(quality.detect_checks(d), [])
+        (d / "package.json").write_text('{"scripts": {"test": "echo \\"Error: no test specified\\" && exit 1", "lint": "eslint ."}}')
+        self.assertEqual(quality.detect_checks(d), ["npm run --silent lint"])
+        (d / "tests").mkdir()
+        (d / "tests/test_a.py").write_text("")
+        self.assertTrue(any("unittest" in c or "pytest" in c for c in quality.detect_checks(d)))
+        (d / "go.mod").write_text("module x")
+        self.assertIn("go test ./...", quality.detect_checks(d))
+
+    def test_snapshot_diff_and_size_cap(self):
+        from unittest import mock
+        from ndc import snapshot
+        d = Path(tempfile.mkdtemp())
+        (d / "a.txt").write_text("1")
+        (d / "node_modules").mkdir()
+        (d / "node_modules/x.js").write_text("ignored")
+        b = snapshot.take(d)
+        self.assertEqual(set(b), {"a.txt"})
+        (d / "a.txt").write_text("2")
+        (d / "b.txt").write_text("new")
+        df = snapshot.diff(b, snapshot.take(d))
+        self.assertEqual((df["changed"], df["added"], df["removed"]), ({"a.txt"}, {"b.txt"}, set()))
+        with mock.patch.object(snapshot, "MAX_FILES", 1):
+            self.assertIsNone(snapshot.take(d))
+
+    def test_review_parser_is_strict(self):
+        from ndc import quality
+        good = '```json\n{"issues": [{"severity": "major", "file": "a", "problem": "p"}]}\n```'
+        self.assertEqual(quality.parse_review(good)[0]["severity"], "major")
+        for bad in ('{"issues": "none"}', '{"issues": [{"severity": "fatal", "problem": "p"}]}', "all good"):
+            with self.assertRaises(planner_mod.PlanError):
+                quality.parse_review(bad)
 
 
 def _git(cwd, *a):
