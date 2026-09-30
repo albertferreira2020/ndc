@@ -137,6 +137,30 @@
       ],
       "rules": [],
       "commands": []
+    },
+    "mysql": {
+      "agents": {},
+      "skills": [
+        "mysql-patterns"
+      ],
+      "rules": [],
+      "commands": []
+    },
+    "redis": {
+      "agents": {},
+      "skills": [
+        "redis-patterns"
+      ],
+      "rules": [],
+      "commands": []
+    },
+    "clickhouse": {
+      "agents": {},
+      "skills": [
+        "clickhouse-io"
+      ],
+      "rules": [],
+      "commands": []
     }
   },
   "rules": [
