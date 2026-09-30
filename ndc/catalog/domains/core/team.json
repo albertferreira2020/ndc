@@ -26,5 +26,14 @@
     "po",
     "usage-guardian",
     "handoff-writer"
+  ],
+  "commands": [
+    "save-session",
+    "resume-session",
+    "checkpoint",
+    "cost-report",
+    "sessions",
+    "aside",
+    "prune"
   ]
 }

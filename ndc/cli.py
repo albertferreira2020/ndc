@@ -104,6 +104,13 @@ def main(argv=None) -> int:
     sc.add_argument("--fail-on", default="high", choices=["high", "medium", "low", "never"])
     sc.add_argument("--json", action="store_true")
 
+    sub.add_parser("dashboard", help="read-only local web page: queue, usage, runs, handoff").add_argument("--port", type=int, default=8765)
+    mc = sub.add_parser("mcp", help="ready-made MCP server configs from ECC").add_subparsers(dest="mcmd", required=True)
+    mc.add_parser("list")
+    ma = mc.add_parser("add", help="merge servers into the project's .mcp.json (never overwrites an entry)")
+    ma.add_argument("names", nargs="+")
+    ma.add_argument("--target", default=".")
+
     r = sub.add_parser("run", help="run the queue (dry run unless --execute)")
     r.add_argument("--execute", action="store_true", help="dispatch tasks to `claude -p`")
     r.add_argument("--ignore-usage", action="store_true", help="run even when usage is unknown")
@@ -164,7 +171,7 @@ def _plan(goal, cfg, db, yes, activate, retries, ignore_usage, append) -> bool:
         return False
     if activate:
         m = activator.activate(plan["domains"], Path.cwd(), cfg, plan.get("stacks", []), add=True)
-        print(f"active: core + {', '.join(m['domains'])}  |  {len(m['agents'])} agents, {len(m['skills'])} skills")
+        print(f"active: core + {', '.join(m['domains'])}  |  {len(m['agents'])} agents, {len(m['skills'])} skills, {len(m['commands'])} commands")
         _report_rules(m)
     inserted = planner.insert(db, plan)
     print(f"{len(inserted)} tasks added. Next: ndc run (dry run) or ndc run --execute")
@@ -182,7 +189,7 @@ def _dispatch(args, cfg) -> int:
         tgt = Path(args.target).resolve()
         m = activator.activate(args.domains, tgt, cfg, _csv(args.stack), args.add, True if args.gitignore else None,
                                False if args.no_rules else None)
-        print(f"active: core + {', '.join(m['domains']) or '(none)'}  |  {len(m['agents'])} agents, {len(m['skills'])} skills")
+        print(f"active: core + {', '.join(m['domains']) or '(none)'}  |  {len(m['agents'])} agents, {len(m['skills'])} skills, {len(m['commands'])} commands")
         _report_rules(m)
         _report_ignore(tgt, m)
         return 0
@@ -194,8 +201,21 @@ def _dispatch(args, cfg) -> int:
         return 0
     if args.cmd == "uninstall":
         r = activator.uninstall(Path(args.target).resolve(), args.purge)
-        print(f"removed {r['agents']} agents, {r['skills']} skills, {r['rules']} rule groups; ignore rules removed: {r['ignore_block_removed']}"
+        print(f"removed {r['agents']} agents, {r['skills']} skills, {r['rules']} rule groups, {r['commands']} commands; ignore rules removed: {r['ignore_block_removed']}"
               + ("; .ndc/ deleted" if r["purged"] else "; .ndc/ kept (use --purge to delete queue and history)"))
+        return 0
+    if args.cmd == "dashboard":
+        from . import dashboard
+        dashboard.serve(cfg, args.port)
+        return 0
+    if args.cmd == "mcp":
+        from . import mcp
+        if args.mcmd == "list":
+            for n, v in mcp.available().items():
+                print(f"{n:30} {v.get('description', '')[:90]}")
+            return 0
+        added = mcp.add(Path(args.target).resolve(), args.names)
+        print(f"added: {', '.join(added) or 'nothing (already present)'}. Fill in any API keys in .mcp.json; NDC never writes secrets.")
         return 0
     if args.cmd == "status":
         print(json.dumps(activator.read_manifest(Path(args.target).resolve()), indent=2))

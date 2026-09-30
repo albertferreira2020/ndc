@@ -10,6 +10,7 @@ import json
 import os
 import shlex
 import shutil
+import subprocess
 from pathlib import Path
 
 from . import activator, project
@@ -28,12 +29,14 @@ def selected(profile: str) -> list[dict]:
     return [h for h in registry() if profile in h["profiles"].split(",")]
 
 
+def _q(x: str) -> str:
+    return shlex.quote(x) if os.name != "nt" else subprocess.list2cmdline([x])
+
+
 def _command(target: Path, h: dict, profile: str) -> str:
     rt, data = target / ".ndc" / "runtime", target / ".ndc" / "agent-data"
-    q = shlex.quote
-    return (f"{MARK} ECC_HOOK_PROFILE={profile} ECC_SKIP_LLM_SUMMARY=1 ECC_AGENT_DATA_HOME={q(str(data))} "
-            f"CLV2_HOMUNCULUS_DIR={q(str(data / 'homunculus'))} CLAUDE_PLUGIN_ROOT={q(str(rt))} node {q(str(rt / 'scripts/hooks/run-with-flags.js'))} "
-            f"{h['id']} {h['script']} {h['profiles']}")
+    args = [MARK, profile, str(data), str(rt), h["id"], h["script"], h["profiles"]]
+    return f"node {_q(str(rt / 'scripts/ndc-run.js'))} " + " ".join(_q(x) for x in args)
 
 
 def _owned(hook: dict) -> bool:

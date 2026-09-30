@@ -30,7 +30,9 @@ STOP -> handoff report -> (wait for reset) -> next task
 | Capability | Source |
 |---|---|
 | Agents, skills | ECC, copied unmodified (`vendor/ecc`) |
-| Rules | ECC, copied unmodified, installed per stack |
+| Rules, slash commands | ECC, copied unmodified, installed per stack or domain |
+| MCP configs | ECC, copied unmodified; `ndc mcp add` merges them |
+| Dashboard | NDC's own (ECC's is a separate tool, not vendored) |
 | Hook scripts and memory persistence | ECC, audited subset copied unmodified (`runtime/`); registry, installer and environment are NDC's |
 | Security scan | NDC's own (ECC's needs `npx ecc-agentshield`) |
 | Parallel worktrees | NDC's own (DevFleet is an external server) |

@@ -21,7 +21,14 @@ NDC builds on [ECC](https://github.com/affaan-m/ECC) (vendored, unmodified, in `
 | **Security scan** (`ndc/scan.py`) | `ndc scan`: secrets, risky code patterns and an audit of the Claude Code config. Also a gate on every task. Offline, no tokens. |
 | **Rules** (`ndc/catalog/vendor/ecc/rules/`) | ECC's coding rules, installed per domain and stack. Most are scoped by file path, so they load only when needed. |
 | **Hooks and memory** (`ndc/hooks.py`, `ndc/catalog/runtime/`) | Opt-in (`ndc hooks enable`): ECC's safety hooks (block `--no-verify`, protect linter configs) and session memory, audited and confined to `.ndc/`. |
+| **Commands** (`.claude/commands/`) | ECC slash commands, installed per domain and stack by `ndc activate` (`/plan`, `/code-review`, `/quality-gate`, `/build-fix`, `python-review`, ...). Tracked in the manifest and removed by `uninstall`; NDC never overwrites a command you wrote. |
+| **MCP configs** (`ndc mcp`) | `ndc mcp list` shows ECC's ready-made servers; `ndc mcp add context7 github` merges them into the project's `.mcp.json` without overwriting entries. Fill in API keys yourself. |
+| **Dashboard** (`ndc dashboard`) | Read-only page on `127.0.0.1:8765`: queue, usage windows, recent runs, handoff. Stdlib only, spends no tokens. |
 | **Runner** (`ndc/runner.py`) | Loop: guard, pick the first task that fits, dispatch via `claude -p --model <m>`, record the usage delta, repeat. On STOP it writes the handoff and can sleep until the reset (`--wait`). |
+
+## Also vendored from ECC (not wired)
+
+`ndc/catalog/vendor/ecc/` also holds ECC's other harness folders (`harnesses/`: Cursor, Codex, OpenCode, Gemini, Kiro, Zed, ...), `install.sh`/`install.ps1`, `manifests/`, `.claude-plugin/`, `contexts/`, `schemas/`, `scaffolds/`, `SOUL.md`, the three guides and `ecc2/` (Rust, not built). They are reference copies: NDC itself still runs only on Claude Code (`claude -p`), and ECC's own installer is the way to use them in another harness. Hooks now register through `runtime/scripts/ndc-run.js`, so the commands no longer use POSIX `VAR=x` syntax and should work on Windows (not tested there).
 
 ## Install
 
@@ -188,7 +195,7 @@ Not validated or not built:
 - No scheduler: NDC runs only when you invoke it. It cannot swap an interactive session that is already open (see New sessions).
 - The quality gates are heuristics: passing them does not mean the code is correct. Regression checks are only as good as the project's own tests.
 - Only the software domain has a complete team; the others are thin.
-- Hooks need Node.js and POSIX shell syntax. Tested on macOS with Python 3.9.
+- Hooks need Node.js. The registered command is shell-neutral, but only macOS is tested (Windows: untested).
 
 `/usage` reports whole percentages, so a task cheaper than one point is recorded as 0.5. Estimates for small tasks stay coarse. The default cost estimates in `ndc/guardian.py` are assumptions, not measurements, replaced by real history after 3 runs per class and window.
 

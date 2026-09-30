@@ -18,6 +18,7 @@ def patterns(manifest: dict, state_only: bool = False) -> list[str]:
     out = ["/.ndc/", "/.claude/.ndc-managed.json"]
     out += [f"/.claude/agents/{a}.md" for a in manifest.get("agents", [])]
     out += [f"/.claude/skills/{s}/" for s in manifest.get("skills", [])]
+    out += [f"/.claude/commands/{c}.md" for c in manifest.get("commands", [])]
     if manifest.get("rules"):
         out.append("/.claude/rules/ndc/")
     if manifest.get("hooks"):

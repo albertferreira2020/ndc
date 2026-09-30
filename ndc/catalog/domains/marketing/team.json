@@ -23,5 +23,8 @@
     "competitive-report-structure",
     "competitive-platform-analysis",
     "x-api"
+  ],
+  "commands": [
+    "marketing-campaign"
   ]
 }

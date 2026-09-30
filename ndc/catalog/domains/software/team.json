@@ -73,6 +73,9 @@
       ],
       "rules": [
         "python"
+      ],
+      "commands": [
+        "python-review"
       ]
     },
     "typescript": {
@@ -106,6 +109,11 @@
       "rules": [
         "react",
         "web"
+      ],
+      "commands": [
+        "react-build",
+        "react-review",
+        "react-test"
       ]
     },
     "vue": {
@@ -122,6 +130,9 @@
       "rules": [
         "vue",
         "web"
+      ],
+      "commands": [
+        "vue-review"
       ]
     },
     "go": {
@@ -137,6 +148,11 @@
       ],
       "rules": [
         "golang"
+      ],
+      "commands": [
+        "go-build",
+        "go-review",
+        "go-test"
       ]
     },
     "rust": {
@@ -152,6 +168,11 @@
       ],
       "rules": [
         "rust"
+      ],
+      "commands": [
+        "rust-build",
+        "rust-review",
+        "rust-test"
       ]
     },
     "java": {
@@ -169,6 +190,9 @@
       ],
       "rules": [
         "java"
+      ],
+      "commands": [
+        "gradle-build"
       ]
     },
     "kotlin": {
@@ -185,6 +209,11 @@
       ],
       "rules": [
         "kotlin"
+      ],
+      "commands": [
+        "kotlin-build",
+        "kotlin-review",
+        "kotlin-test"
       ]
     },
     "swift": {
@@ -215,6 +244,11 @@
       ],
       "rules": [
         "cpp"
+      ],
+      "commands": [
+        "cpp-build",
+        "cpp-review",
+        "cpp-test"
       ]
     },
     "csharp": {
@@ -272,6 +306,9 @@
       ],
       "rules": [
         "python"
+      ],
+      "commands": [
+        "fastapi-review"
       ]
     },
     "flutter": {
@@ -287,10 +324,51 @@
       ],
       "rules": [
         "dart"
+      ],
+      "commands": [
+        "flutter-build",
+        "flutter-review",
+        "flutter-test"
       ]
     }
   },
   "rules": [
     "common"
+  ],
+  "commands": [
+    "plan",
+    "plan-prd",
+    "feature-dev",
+    "code-review",
+    "review-pr",
+    "quality-gate",
+    "build-fix",
+    "refactor-clean",
+    "test-coverage",
+    "security-scan",
+    "update-docs",
+    "update-codemaps",
+    "prp-prd",
+    "prp-plan",
+    "prp-implement",
+    "prp-commit",
+    "prp-pr",
+    "pr",
+    "orch-add-feature",
+    "orch-build-mvp",
+    "orch-change-feature",
+    "orch-fix-defect",
+    "orch-refine-code",
+    "orch-review",
+    "model-route",
+    "loop-start",
+    "loop-status",
+    "learn",
+    "learn-eval",
+    "instinct-status",
+    "instinct-export",
+    "instinct-import",
+    "evolve",
+    "harness-audit"
   ]
 }

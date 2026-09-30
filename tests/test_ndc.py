@@ -396,6 +396,9 @@ class ActivatorTests(unittest.TestCase):
                         self.assertTrue((root / "vendor/ecc/agents" / f"{a}.md").exists(), a)
                 for s in g["skills"]:
                     self.assertTrue((root / "vendor/ecc/skills" / s / "SKILL.md").exists(), s)
+            for g in groups:
+                for c in g.get("commands", []):
+                    self.assertTrue((root / "vendor/ecc/commands" / f"{c}.md").exists(), c)
             for a in d.get("ndc_agents", []):
                 self.assertTrue((root / "core/agents" / f"{a}.md").exists(), a)
 
@@ -1203,7 +1206,7 @@ class HooksTests(unittest.TestCase):
 
     def ids(self):
         s = json.loads((self.d / ".claude/settings.local.json").read_text())
-        return sorted(h["command"].split("NDC_HOOK=1")[1].split("run-with-flags.js")[1].split()[0]
+        return sorted(h["command"].split("NDC_HOOK=1")[1].split()[3]
                       for groups in s["hooks"].values() for g in groups for h in g["hooks"] if "NDC_HOOK=1" in h["command"])
 
     def test_profiles_select_different_hook_sets(self):
@@ -1690,6 +1693,53 @@ class ProjectFootprintTests(unittest.TestCase):
         self.assertTrue((d / ".ndc").is_dir())
         self.assertIn("/.ndc/", (d / ".git/info/exclude").read_text())
         self.assertFalse((d / ".claude/agents").exists())
+
+
+class EccExtrasTests(unittest.TestCase):
+    def test_commands_follow_domain_and_uninstall_cleans_up(self):
+        t = Path(tempfile.mkdtemp())
+        activator.activate(["software"], t, CFG, ["python"])
+        cd = t / ".claude/commands"
+        self.assertTrue((cd / "plan.md").exists() and (cd / "python-review.md").exists())
+        self.assertFalse((cd / "go-review.md").exists())
+        activator.activate(["marketing"], t, CFG)
+        self.assertTrue((cd / "marketing-campaign.md").exists() and (cd / "save-session.md").exists())
+        self.assertFalse((cd / "plan.md").exists())
+        activator.uninstall(t)
+        self.assertFalse((t / ".claude").exists())
+
+    def test_commands_refuse_to_overwrite_user_files(self):
+        t = Path(tempfile.mkdtemp())
+        (t / ".claude/commands").mkdir(parents=True)
+        (t / ".claude/commands/plan.md").write_text("mine")
+        with self.assertRaises(FileExistsError):
+            activator.activate(["software"], t, CFG)
+        self.assertEqual((t / ".claude/commands/plan.md").read_text(), "mine")
+
+    def test_mcp_add_merges_and_never_overwrites(self):
+        from ndc import mcp
+        t = Path(tempfile.mkdtemp())
+        (t / ".mcp.json").write_text(json.dumps({"mcpServers": {"context7": {"command": "mine"}}}))
+        self.assertEqual(mcp.add(t, ["context7", "memory"]), ["memory"])
+        d = json.loads((t / ".mcp.json").read_text())["mcpServers"]
+        self.assertEqual(d["context7"], {"command": "mine"})
+        self.assertNotIn("description", d["memory"])
+        with self.assertRaises(KeyError):
+            mcp.add(t, ["nope"])
+
+    def test_hook_command_has_no_posix_env_prefix(self):
+        from ndc import hooks
+        c = hooks._command(Path("/p"), {"id": "x", "script": "s.js", "profiles": "standard"}, "standard")
+        self.assertTrue(c.startswith("node ") and "ECC_" not in c and "ndc-run.js" in c)
+
+    def test_dashboard_snapshot(self):
+        from unittest import mock
+        from ndc import dashboard
+        d = Path(tempfile.mkdtemp())
+        with mock.patch.dict(os.environ, {"NDC_STATE": str(d)}):
+            store.add_task(store.connect(), "demo")
+            snap = dashboard.snapshot(CFG)
+        self.assertEqual(snap["counts"], {"pending": 1})
 
 
 if __name__ == "__main__":

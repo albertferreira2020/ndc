@@ -22,7 +22,7 @@ def load_domains() -> dict:
 
 
 def _resolve(domains: dict, names: list[str], stacks: list[str]):
-    agents, skills, ndc_agents, rules = {}, [], [], []
+    agents, skills, ndc_agents, rules, cmds = {}, [], [], [], []
     for n in ["core"] + [x for x in names if x != "core"]:
         if n not in domains:
             raise KeyError(f"unknown domain '{n}'. Available: {', '.join(sorted(domains))}")
@@ -30,6 +30,7 @@ def _resolve(domains: dict, names: list[str], stacks: list[str]):
         ndc_agents += d.get("ndc_agents", [])
         skills += d["skills"]
         rules += d.get("rules", [])
+        cmds += d.get("commands", [])
         for lvl in LEVELS:
             for a in d["agents"].get(lvl, []):
                 agents.setdefault(a, lvl)
@@ -38,6 +39,7 @@ def _resolve(domains: dict, names: list[str], stacks: list[str]):
             if st:
                 skills += st["skills"]
                 rules += st.get("rules", [])
+                cmds += st.get("commands", [])
                 for lvl in LEVELS:
                     for a in st["agents"].get(lvl, []):
                         agents.setdefault(a, lvl)
@@ -45,7 +47,7 @@ def _resolve(domains: dict, names: list[str], stacks: list[str]):
     bad = [s for s in stacks if s not in known]
     if bad:
         raise KeyError(f"unknown stack(s): {bad}. Available: {sorted(known)}")
-    return agents, list(dict.fromkeys(skills)), ndc_agents, list(dict.fromkeys(rules))
+    return agents, list(dict.fromkeys(skills)), ndc_agents, list(dict.fromkeys(rules)), list(dict.fromkeys(cmds))
 
 
 def _set_model(text: str, model: str) -> str:
@@ -54,7 +56,7 @@ def _set_model(text: str, model: str) -> str:
 
 def read_manifest(target: Path) -> dict:
     p = target / ".claude" / MANIFEST
-    base = {"domains": [], "stacks": [], "agents": [], "skills": [], "rules": [], "no_rules": False, "hooks": None,
+    base = {"domains": [], "stacks": [], "agents": [], "skills": [], "rules": [], "commands": [], "no_rules": False, "hooks": None,
             "gitignore": False}
     return base | json.loads(p.read_text()) if p.exists() else base
 
@@ -90,14 +92,15 @@ def activate(names: list[str], target: Path, cfg: dict, stacks=(), add=False, gi
         names = list(dict.fromkeys(prev["domains"] + names))
         stacks = list(dict.fromkeys(prev["stacks"] + list(stacks)))
     names = [n for n in names if n != "core"]
-    agents, skills, ndc_agents, rule_groups = _resolve(domains, names, list(stacks))
+    agents, skills, ndc_agents, rule_groups, cmds = _resolve(domains, names, list(stacks))
     root = catalog_root()
     claude = target / ".claude"
-    adir, sdir, rdir = claude / "agents", claude / "skills", claude / "rules" / "ndc"
+    adir, sdir, rdir, cdir = claude / "agents", claude / "skills", claude / "rules" / "ndc", claude / "commands"
 
     wanted_agents = set(agents) | set(ndc_agents)
     wanted_skills = set(skills)
     wanted_rules = set(rule_groups) if rules_on else set()
+    wanted_cmds = set(cmds)
 
     # Check every conflict with the user's own files BEFORE changing anything: no half-applied state.
     for a in wanted_agents - set(prev["agents"]):
@@ -106,6 +109,9 @@ def activate(names: list[str], target: Path, cfg: dict, stacks=(), add=False, gi
     for sk in wanted_skills - set(prev["skills"]):
         if (sdir / sk).exists() or (sdir / sk).is_symlink():
             raise FileExistsError(f"{sdir / sk} exists and is not managed by NDC; refusing to overwrite")
+    for c in wanted_cmds - set(prev["commands"]):
+        if (cdir / f"{c}.md").exists():
+            raise FileExistsError(f"{cdir / (c + '.md')} exists and is not managed by NDC; refusing to overwrite")
     for g in wanted_rules - set(prev["rules"]):
         if (rdir / g).exists():
             raise FileExistsError(f"{rdir / g} exists and is not managed by NDC; refusing to overwrite")
@@ -118,6 +124,8 @@ def activate(names: list[str], target: Path, cfg: dict, stacks=(), add=False, gi
         _remove(sdir / sk)
     for g in set(prev["rules"]) - wanted_rules:
         _remove(rdir / g)
+    for c in set(prev["commands"]) - wanted_cmds:
+        (cdir / f"{c}.md").unlink(missing_ok=True)
 
     for a, lvl in agents.items():
         text = (root / "vendor/ecc/agents" / f"{a}.md").read_text()
@@ -136,10 +144,14 @@ def activate(names: list[str], target: Path, cfg: dict, stacks=(), add=False, gi
         dst.mkdir(parents=True)
         for f in sorted((root / "vendor/ecc/rules" / g).glob("*.md")):
             shutil.copyfile(f, dst / f.name)
-    _rmdir_if_empty(rdir, rdir.parent)
+    if wanted_cmds:
+        cdir.mkdir(parents=True, exist_ok=True)
+    for c in wanted_cmds:
+        shutil.copyfile(root / "vendor/ecc/commands" / f"{c}.md", cdir / f"{c}.md")
+    _rmdir_if_empty(rdir, rdir.parent, cdir)
 
     manifest = {"domains": names, "stacks": list(stacks), "agents": sorted(wanted_agents),
-                "skills": sorted(wanted_skills), "rules": sorted(wanted_rules), "no_rules": not rules_on,
+                "skills": sorted(wanted_skills), "rules": sorted(wanted_rules), "commands": sorted(wanted_cmds), "no_rules": not rules_on,
                 "hooks": prev.get("hooks"), "gitignore": bool(gitignore)}  # hooks are managed by `ndc hooks`
     write_manifest(target, manifest)
     (target / ".ndc").mkdir(exist_ok=True)
@@ -173,11 +185,13 @@ def uninstall(target: Path, purge=False) -> dict:
         (adir / f"{a}.md").unlink(missing_ok=True)
     for sk in m["skills"]:
         _remove(sdir / sk)
-    rdir = target / ".claude" / "rules" / "ndc"
+    rdir, cdir = target / ".claude" / "rules" / "ndc", target / ".claude" / "commands"
     for g in m["rules"]:
         _remove(rdir / g)
+    for c in m["commands"]:
+        (cdir / f"{c}.md").unlink(missing_ok=True)
     (target / ".claude" / MANIFEST).unlink(missing_ok=True)
-    _rmdir_if_empty(adir, sdir, rdir, rdir.parent)
+    _rmdir_if_empty(adir, sdir, cdir, rdir, rdir.parent)
     if purge and (target / ".ndc").exists():
         shutil.rmtree(target / ".ndc")
     if (target / ".ndc").exists():  # state kept: keep hiding it from git
@@ -188,7 +202,7 @@ def uninstall(target: Path, purge=False) -> dict:
     for d in (target / ".claude",):
         if d.is_dir() and not any(d.iterdir()):
             d.rmdir()
-    return {"agents": len(m["agents"]), "skills": len(m["skills"]), "rules": len(m["rules"]),
+    return {"agents": len(m["agents"]), "skills": len(m["skills"]), "rules": len(m["rules"]), "commands": len(m["commands"]),
             "ignore_block_removed": hidden, "purged": purge}
 
 
