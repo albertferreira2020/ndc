@@ -4,7 +4,7 @@ import json
 import os
 from pathlib import Path
 
-PKG_ROOT = Path(__file__).resolve().parent.parent
+PKG_ROOT = Path(__file__).resolve().parent / "catalog"  # catalog ships inside the package
 
 
 def catalog_root() -> Path:

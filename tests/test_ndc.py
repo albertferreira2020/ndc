@@ -377,7 +377,7 @@ class HandoffTests(unittest.TestCase):
 
 class ActivatorTests(unittest.TestCase):
     def test_every_catalog_reference_exists(self):
-        root = Path(__file__).resolve().parent.parent
+        root = Path(__file__).resolve().parent.parent / "ndc" / "catalog"
         for name, d in activator.load_domains().items():
             groups = [d] + list(d.get("stacks", {}).values())
             for g in groups:
@@ -424,6 +424,116 @@ class ActivatorTests(unittest.TestCase):
             activator.activate(["nope"], t, CFG)
         with self.assertRaises(KeyError):
             activator.activate(["software"], t, CFG, ["cobol"])
+
+
+def _git(cwd, *a):
+    import subprocess
+    return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a], cwd=cwd,
+                          capture_output=True, text=True, check=True).stdout
+
+
+def _repo():
+    d = Path(tempfile.mkdtemp())
+    _git(d, "init", "-q", "-b", "main")
+    (d / "app.py").write_text("print(1)\n")
+    _git(d, "add", "-A")
+    _git(d, "commit", "-q", "-m", "init")
+    return d
+
+
+class ProjectFootprintTests(unittest.TestCase):
+    def test_git_status_stays_clean_after_activate(self):
+        d = _repo()
+        activator.activate(["software"], d, CFG, ["python"])
+        self.assertTrue((d / ".claude/agents/planner.md").exists())
+        self.assertEqual(_git(d, "status", "--porcelain"), "")
+
+    def test_switching_domains_rewrites_the_block(self):
+        d = _repo()
+        activator.activate(["software"], d, CFG)
+        activator.activate(["marketing"], d, CFG)
+        ex = (d / ".git/info/exclude").read_text()
+        self.assertIn("/.claude/agents/marketing-agent.md", ex)
+        self.assertNotIn("/.claude/agents/planner.md", ex)
+        self.assertEqual(ex.count(">>> ndc"), 1)
+        self.assertEqual(_git(d, "status", "--porcelain"), "")
+
+    def test_existing_user_rules_survive_and_are_restored(self):
+        d = _repo()
+        ex = d / ".git/info/exclude"
+        ex.write_text("*.log\nsecret.txt\n")
+        activator.activate(["software"], d, CFG)
+        activator.activate(["software"], d, CFG)  # idempotent
+        self.assertEqual(ex.read_text().count(">>> ndc"), 1)
+        self.assertIn("secret.txt", ex.read_text())
+        activator.uninstall(d, purge=True)
+        self.assertEqual(ex.read_text().strip(), "*.log\nsecret.txt")
+
+    def test_uninstall_removes_only_what_ndc_installed(self):
+        d = _repo()
+        (d / ".claude/agents").mkdir(parents=True)
+        (d / ".claude/agents/mine.md").write_text("mine")
+        activator.activate(["software"], d, CFG)
+        store_file = d / ".ndc/keep.txt"
+        store_file.write_text("queue")
+        r = activator.uninstall(d)
+        self.assertFalse(r["ignore_block_removed"])  # state kept, so .ndc/ stays hidden
+        self.assertEqual(_git(d, "status", "--porcelain").strip(), "?? .claude/")  # only the user's own mine.md
+        self.assertEqual((d / ".claude/agents/mine.md").read_text(), "mine")
+        self.assertFalse((d / ".claude/agents/planner.md").exists())
+        self.assertFalse((d / ".claude/skills").exists())
+        self.assertFalse((d / ".claude/.ndc-managed.json").exists())
+        self.assertTrue(store_file.exists())  # state kept without --purge
+        r = activator.uninstall(d, purge=True)
+        self.assertTrue(r["ignore_block_removed"])
+        self.assertFalse((d / ".ndc").exists())
+        self.assertNotIn(">>> ndc", (d / ".git/info/exclude").read_text())
+
+    def test_uninstall_leaves_no_empty_claude_dir(self):
+        d = _repo()
+        activator.activate(["software"], d, CFG)
+        activator.uninstall(d, purge=True)
+        self.assertFalse((d / ".claude").exists())
+
+    def test_skills_are_copies_not_links(self):
+        d = _repo()
+        activator.activate(["software"], d, CFG)
+        sk = d / ".claude/skills/tdd-workflow"
+        self.assertTrue(sk.is_dir() and not sk.is_symlink())
+        self.assertTrue((sk / "SKILL.md").exists())
+
+    def test_gitignore_mode_and_switching_back(self):
+        d = _repo()
+        (d / ".gitignore").write_text("node_modules/\n")
+        activator.activate(["software"], d, CFG, gitignore=True)
+        gi = (d / ".gitignore").read_text()
+        self.assertIn("node_modules/", gi)
+        self.assertIn("/.ndc/", gi)
+        self.assertNotIn(">>> ndc", (d / ".git/info/exclude").read_text())
+        activator.activate(["software"], d, CFG, gitignore=False)
+        self.assertNotIn(">>> ndc", (d / ".gitignore").read_text())
+        self.assertIn(">>> ndc", (d / ".git/info/exclude").read_text())
+        activator.uninstall(d)
+        self.assertEqual((d / ".gitignore").read_text().strip(), "node_modules/")
+
+    def test_not_a_git_repo_is_fine(self):
+        d = Path(tempfile.mkdtemp())
+        activator.activate(["software"], d, CFG)
+        self.assertTrue((d / ".claude/agents/planner.md").exists())
+
+    def test_warns_when_git_already_tracks_ndc_files(self):
+        from ndc import project
+        d = _repo()
+        activator.activate(["software"], d, CFG)
+        _git(d, "add", "-f", ".claude/agents/planner.md")
+        self.assertIn(".claude/agents/planner.md", project.tracked(d, activator.read_manifest(d)))
+
+    def test_init_prepares_without_activating(self):
+        d = _repo()
+        activator.init(d)
+        self.assertTrue((d / ".ndc").is_dir())
+        self.assertIn("/.ndc/", (d / ".git/info/exclude").read_text())
+        self.assertFalse((d / ".claude/agents").exists())
 
 
 if __name__ == "__main__":

@@ -7,8 +7,8 @@ model: haiku
 
 Produce a handoff a new session can act on with no other context.
 
-1. Run `python3 -m ndc handoff --notes "<decisions, gotchas, files touched, how to run tests>"`. It writes `.ndc/handoff/latest.md` from the task queue.
+1. Run `ndc handoff --notes "<decisions, gotchas, files touched, how to run tests>"`. It writes `.ndc/handoff/latest.md` from the task queue.
 2. Enrich the notes with what only this session knows: decisions and their reasons, dead ends, failing tests, the exact next step.
-3. The new session starts with `python3 -m ndc resume-prompt`, which prints the handoff as the initial prompt.
+3. The new session starts with `ndc resume-prompt`, which prints the handoff as the initial prompt.
 
 Keep it factual and short. No narrative about how the session went.

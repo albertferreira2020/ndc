@@ -7,6 +7,7 @@ import re
 import shutil
 from pathlib import Path
 
+from . import project
 from .config import catalog_root
 
 MANIFEST = ".ndc-managed.json"
@@ -51,12 +52,14 @@ def _set_model(text: str, model: str) -> str:
 
 def read_manifest(target: Path) -> dict:
     p = target / ".claude" / MANIFEST
-    return json.loads(p.read_text()) if p.exists() else {"domains": [], "stacks": [], "agents": [], "skills": []}
+    return json.loads(p.read_text()) if p.exists() else {"domains": [], "stacks": [], "agents": [], "skills": [], "gitignore": False}
 
 
-def activate(names: list[str], target: Path, cfg: dict, stacks=(), add=False) -> dict:
+def activate(names: list[str], target: Path, cfg: dict, stacks=(), add=False, gitignore=None) -> dict:
     domains = load_domains()
     prev = read_manifest(target)
+    if gitignore is None:
+        gitignore = prev.get("gitignore", False)
     if add:
         names = list(dict.fromkeys(prev["domains"] + names))
         stacks = list(dict.fromkeys(prev["stacks"] + list(stacks)))
@@ -88,11 +91,47 @@ def activate(names: list[str], target: Path, cfg: dict, stacks=(), add=False) ->
             if s not in prev["skills"]:
                 raise FileExistsError(f"{dst} exists and is not managed by NDC; refusing to overwrite")
             _remove(dst)
-        os.symlink(root / "vendor/ecc/skills" / s, dst)
+        shutil.copytree(root / "vendor/ecc/skills" / s, dst, ignore=shutil.ignore_patterns(".DS_Store"))  # copies, not links: portable
 
-    manifest = {"domains": names, "stacks": list(stacks), "agents": sorted(wanted_agents), "skills": sorted(wanted_skills)}
+    manifest = {"domains": names, "stacks": list(stacks), "agents": sorted(wanted_agents),
+                "skills": sorted(wanted_skills), "gitignore": bool(gitignore)}
     (target / ".claude" / MANIFEST).write_text(json.dumps(manifest, indent=2))
+    (target / ".ndc").mkdir(exist_ok=True)
+    if prev.get("gitignore", False) != bool(gitignore):
+        project.remove_block(target, prev.get("gitignore", False))  # switching mode: clean the old file
+    project.write_block(target, manifest, bool(gitignore))
     return manifest
+
+
+def init(target: Path, gitignore=False) -> Path | None:
+    """Prepares a project without activating any team: creates .ndc/ and hides it from git."""
+    (target / ".ndc").mkdir(exist_ok=True)
+    return project.write_block(target, read_manifest(target) | {"gitignore": gitignore}, gitignore)
+
+
+def uninstall(target: Path, purge=False) -> dict:
+    """Removes only what NDC installed (per the manifest). Queue state in .ndc/ is kept unless purge."""
+    m = read_manifest(target)
+    adir, sdir = target / ".claude" / "agents", target / ".claude" / "skills"
+    for a in m["agents"]:
+        (adir / f"{a}.md").unlink(missing_ok=True)
+    for sk in m["skills"]:
+        _remove(sdir / sk)
+    (target / ".claude" / MANIFEST).unlink(missing_ok=True)
+    for d in (adir, sdir):
+        if d.is_dir() and not any(d.iterdir()):
+            d.rmdir()
+    if purge and (target / ".ndc").exists():
+        shutil.rmtree(target / ".ndc")
+    if (target / ".ndc").exists():  # state kept: keep hiding it from git
+        project.write_block(target, m, m.get("gitignore", False), state_only=True)
+        hidden = False
+    else:
+        hidden = project.remove_block(target, m.get("gitignore", False))
+    for d in (target / ".claude",):
+        if d.is_dir() and not any(d.iterdir()):
+            d.rmdir()
+    return {"agents": len(m["agents"]), "skills": len(m["skills"]), "ignore_block_removed": hidden, "purged": purge}
 
 
 def _remove(p: Path):

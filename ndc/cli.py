@@ -27,6 +27,15 @@ def main(argv=None) -> int:
     a.add_argument("--target", default=".")
     a.add_argument("--stack", default="", help="comma list, e.g. python,react")
     a.add_argument("--add", action="store_true", help="keep already active domains")
+    a.add_argument("--gitignore", action="store_true", help="hide NDC files via .gitignore instead of .git/info/exclude")
+
+    i = sub.add_parser("init", help="prepare a project: create .ndc/ and hide NDC files from git")
+    i.add_argument("--target", default=".")
+    i.add_argument("--gitignore", action="store_true", help="write rules to .gitignore instead of .git/info/exclude")
+
+    un = sub.add_parser("uninstall", help="remove everything NDC installed in a project")
+    un.add_argument("--target", default=".")
+    un.add_argument("--purge", action="store_true", help="also delete .ndc/ (queue, history, handoffs)")
 
     s = sub.add_parser("status", help="show what is active in a project")
     s.add_argument("--target", default=".")
@@ -76,6 +85,18 @@ def main(argv=None) -> int:
         return 2
 
 
+def _report_ignore(tgt, manifest, f=...):
+    from . import project
+    if f is ...:
+        f = project.ignore_file(tgt, manifest.get("gitignore", False))
+    if f is None:
+        print("note: not a git repository, no ignore rules written")
+    else:
+        print(f"hidden from git via {f}")
+    for t in project.tracked(tgt, manifest):
+        print(f"warning: git already tracks {t}; the ignore rule does not apply (run `git rm --cached`)")
+
+
 def _dispatch(args, cfg) -> int:
     if args.cmd == "domains":
         for n, d in activator.load_domains().items():
@@ -84,8 +105,21 @@ def _dispatch(args, cfg) -> int:
             print(f"{n:11} {n_ag:2} agents {len(d['skills']):2} skills  {d['description']}{stacks}")
         return 0
     if args.cmd == "activate":
-        m = activator.activate(args.domains, Path(args.target).resolve(), cfg, _csv(args.stack), args.add)
+        tgt = Path(args.target).resolve()
+        m = activator.activate(args.domains, tgt, cfg, _csv(args.stack), args.add, True if args.gitignore else None)
         print(f"active: core + {', '.join(m['domains']) or '(none)'}  |  {len(m['agents'])} agents, {len(m['skills'])} skills")
+        _report_ignore(tgt, m)
+        return 0
+    if args.cmd == "init":
+        tgt = Path(args.target).resolve()
+        f = activator.init(tgt, args.gitignore)
+        print(f"initialized {tgt / '.ndc'}")
+        _report_ignore(tgt, activator.read_manifest(tgt), f)
+        return 0
+    if args.cmd == "uninstall":
+        r = activator.uninstall(Path(args.target).resolve(), args.purge)
+        print(f"removed {r['agents']} agents, {r['skills']} skills; ignore rules removed: {r['ignore_block_removed']}"
+              + ("; .ndc/ deleted" if r["purged"] else "; .ndc/ kept (use --purge to delete queue and history)"))
         return 0
     if args.cmd == "status":
         print(json.dumps(activator.read_manifest(Path(args.target).resolve()), indent=2))

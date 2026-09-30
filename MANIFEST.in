@@ -1,0 +1,2 @@
+recursive-include ndc/catalog *
+global-exclude .DS_Store *.pyc __pycache__

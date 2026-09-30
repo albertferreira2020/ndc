@@ -30,7 +30,7 @@ def build(db, notes: str = "", reason: str = "") -> str:
         out.append("- (nothing pending)")
     out += ["", "## Notes from the session", notes.strip() or "(none provided)", "",
             "## How to continue",
-            "Run `python3 -m ndc run --execute` to resume the queue. Do not redo the Done items."]
+            "Run `ndc run --execute` to resume the queue. Do not redo the Done items."]
     return "\n".join(out) + "\n"
 
 

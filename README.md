@@ -2,34 +2,55 @@
 
 Continuous development by agents that respect usage limits.
 
-NDC builds on [ECC](https://github.com/affaan-m/ECC) (vendored, unmodified, in `vendor/ecc/`) and adds what ECC lacks:
+NDC builds on [ECC](https://github.com/affaan-m/ECC) (vendored, unmodified, in `ndc/catalog/vendor/ecc/`) and adds what ECC lacks:
 
 | Piece | What it does |
 |---|---|
-| **Domains** (`domains/*/team.json`) | The whole catalog stays in the repo, but only the team for the current job is activated in a project (software, marketing, research, infra, ml, healthcare, opensource). `core` is always on. |
+| **Domains** (`ndc/catalog/domains/*/team.json`) | The whole catalog stays in the repo, but only the team for the current job is activated in a project (software, marketing, research, infra, ml, healthcare, opensource). `core` is always on. |
 | **Usage guardian** (`ndc/guardian.py`) | Predicts what the next task costs (measured p80 per complexity class, conservative defaults until history exists) and decides `GO`, `WIND_DOWN` (low budget, only tasks that fit) or `STOP`. Checks every window (session and weekly). |
 | **Queue** (`ndc/store.py`) | SQLite task queue with dependencies, failure counts and per-run usage history. |
 | **Classifier** (`ndc/classify.py`) | Free, deterministic floor for complexity and risk (risk words, file count). The PO can raise a task, never lower it below the floor. |
-| **Routing** (`ndc/router.py`, `core/agents/po.md`) | By kind, risk and complexity: explore/docs/chore/test go to haiku, M/L work and anything high-risk to sonnet, planning and XL to opus. A failure moves the task up one tier; a class where haiku succeeds under 70% (5+ runs) is moved up automatically. |
+| **Routing** (`ndc/router.py`, `ndc/catalog/core/agents/po.md`) | By kind, risk and complexity: explore/docs/chore/test go to haiku, M/L work and anything high-risk to sonnet, planning and XL to opus. A failure moves the task up one tier; a class where haiku succeeds under 70% (5+ runs) is moved up automatically. |
 | **Gates** (`--verify`, `--expect-red`) | A task only counts as done if its command passes. Haiku-written tests must fail first, so vacuous tests are rejected. Cheap models fail cheaply. |
 | **Briefs** | Haiku explore/test output is injected into dependent tasks so the expensive model does not re-read the codebase. |
 | **Handoff** (`ndc/handoff.py`) | On a stop, writes done / pending / blocked / notes so a fresh session starts with context. |
 | **Runner** (`ndc/runner.py`) | Loop: guard, pick the first task that fits, dispatch via `claude -p --model <m>`, record the usage delta, repeat. On STOP it writes the handoff and can sleep until the reset (`--wait`). |
 
-## Quick start
+## Install
 
 ```bash
-export PYTHONPATH=/path/to/NDC NDC_ROOT=/path/to/NDC     # or `pip install -e .` later
-cd my-project
-python3 -m ndc domains
-python3 -m ndc activate software --stack python,react    # only this team is active
-python3 -m ndc task add "Add login" --desc "acceptance: ..." --complexity M
-python3 -m ndc usage set --session 40 --session-resets 2026-09-30T15:00:00+00:00
-python3 -m ndc run                  # dry run: shows routing and guard decisions, changes nothing
-python3 -m ndc run --execute --wait # really dispatches tasks
+python3 -m venv ~/.ndc-venv
+~/.ndc-venv/bin/pip install ndc-0.2.0-py3-none-any.whl     # the whole catalog is inside the package
+ln -s ~/.ndc-venv/bin/ndc ~/.local/bin/ndc                 # optional: `ndc` on your PATH
 ```
 
-Switching teams: `activate marketing` replaces the previous domain (core stays); `activate marketing --add` keeps it. NDC only removes files it created and refuses to overwrite yours.
+(`pipx install ndc-0.2.0-py3-none-any.whl` works too.) Python 3.9+, standard library only.
+
+## Quick start (inside any project)
+
+```bash
+cd my-project
+ndc domains                                   # what the catalog offers
+ndc activate software --stack python,react    # only this team becomes active
+ndc task add "Add login" --desc "acceptance: ..." --kind work
+ndc run                       # dry run: shows routing and guard decisions, changes nothing
+ndc run --execute --wait      # really dispatches tasks
+ndc uninstall                 # removes everything NDC installed (--purge also deletes .ndc/)
+```
+
+Switching teams: `activate marketing` replaces the previous domain (core stays); `activate marketing --add` keeps it.
+
+## Footprint in your project
+
+NDC is a support tool, not part of the product. In a project it creates only:
+
+| Path | What | Removed by `uninstall` |
+|---|---|---|
+| `.claude/agents/*.md`, `.claude/skills/*/` | the active team (copies, so nothing depends on where NDC is installed) | yes |
+| `.claude/.ndc-managed.json` | list of what NDC installed | yes |
+| `.ndc/` | task queue, history, handoffs, briefs | only with `--purge` |
+
+All of it is hidden from git through a marked block in `.git/info/exclude`: local, never committed, invisible to teammates, and it lists exactly the NDC paths, so your own files in `.claude/` are not ignored. Use `--gitignore` to write the block to the project's `.gitignore` instead. NDC refuses to overwrite agents or skills it did not create, warns if git already tracks an NDC file, and does nothing to the ignore rules if the folder is not a git repository. The rules in the block are rewritten on every `activate`; edit outside the markers.
 
 ## When monitoring starts
 
@@ -47,10 +68,10 @@ Alternatives: `usage.source: "file"` reads the same JSON from a file, fed by `nd
 
 ## Status
 
-v0.1. Guardian, queue, router, handoff, activator and runner are implemented and covered by `python3 -m unittest discover -s tests`. Not implemented: the PO agent actually creating the backlog end to end (the agent prompts exist in `core/agents/`), DevFleet integration (see `docs/ARCHITECTURE.md`), and the "new session" hand-off inside a live interactive session (use `ndc resume-prompt`).
+v0.2. Guardian, queue, router, handoff, activator and runner are implemented and covered by `python3 -m unittest discover -s tests`. Not implemented: the PO agent actually creating the backlog end to end (the agent prompts exist in `ndc/catalog/core/agents/`), DevFleet integration (see `docs/ARCHITECTURE.md`), and the "new session" hand-off inside a live interactive session (use `ndc resume-prompt`).
 
 `/usage` reports whole percentages, so a task cheaper than one point is recorded as 0.5. Estimates for small tasks stay coarse.
 
 The default cost estimates in `ndc/guardian.py` are assumptions, not measurements. They are replaced by real history after 3 runs per class and window.
 
-License: MIT. ECC is (c) Affaan Mustafa, MIT, see `vendor/ecc/LICENSE`.
+License: MIT. ECC is (c) Affaan Mustafa, MIT, see `ndc/catalog/vendor/ecc/LICENSE`.
