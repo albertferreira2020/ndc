@@ -129,6 +129,14 @@
         "react-native"
       ],
       "commands": []
+    },
+    "postgres": {
+      "agents": {},
+      "skills": [
+        "postgres-patterns"
+      ],
+      "rules": [],
+      "commands": []
     }
   },
   "rules": [
