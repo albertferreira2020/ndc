@@ -1,0 +1,15 @@
+[project]
+name = "ndc"
+version = "0.1.0"
+description = "Nonstop Development Crew: budget-aware continuous development by agents"
+requires-python = ">=3.9"
+
+[project.scripts]
+ndc = "ndc.cli:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["ndc"]

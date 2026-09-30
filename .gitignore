@@ -1,0 +1,4 @@
+.ndc/
+__pycache__/
+*.pyc
+projects/

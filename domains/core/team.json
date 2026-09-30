@@ -1,0 +1,30 @@
+{
+  "description": "Always active: NDC control plane plus loop/budget/memory tooling from ECC.",
+  "always": true,
+  "agents": {
+    "po": [
+      "loop-operator",
+      "chief-of-staff"
+    ],
+    "senior": [
+      "harness-optimizer",
+      "agent-evaluator"
+    ],
+    "junior": []
+  },
+  "skills": [
+    "continuous-agent-loop",
+    "context-budget",
+    "token-budget-advisor",
+    "cost-tracking",
+    "strategic-compact",
+    "unified-memory",
+    "autonomous-loops",
+    "operator-approval-loop"
+  ],
+  "ndc_agents": [
+    "po",
+    "usage-guardian",
+    "handoff-writer"
+  ]
+}

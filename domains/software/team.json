@@ -1,0 +1,246 @@
+{
+  "description": "Build, fix and change software (feature, defect, refactor, MVP).",
+  "agents": {
+    "po": [
+      "planner",
+      "architect",
+      "spec-miner"
+    ],
+    "senior": [
+      "code-architect",
+      "code-explorer",
+      "tdd-guide",
+      "code-reviewer",
+      "security-reviewer",
+      "database-reviewer",
+      "performance-optimizer",
+      "build-error-resolver",
+      "e2e-runner",
+      "pr-test-analyzer",
+      "silent-failure-hunter",
+      "type-design-analyzer",
+      "refactor-cleaner",
+      "code-simplifier"
+    ],
+    "junior": [
+      "doc-updater",
+      "docs-lookup",
+      "comment-analyzer"
+    ]
+  },
+  "skills": [
+    "orch-pipeline",
+    "orch-add-feature",
+    "orch-fix-defect",
+    "orch-change-feature",
+    "orch-refine-code",
+    "orch-build-mvp",
+    "plan-orchestrate",
+    "team-builder",
+    "parallel-execution-optimizer",
+    "tdd-workflow",
+    "verification-loop",
+    "coding-standards",
+    "git-workflow",
+    "github-ops",
+    "security-review",
+    "security-scan",
+    "api-design",
+    "backend-patterns",
+    "frontend-patterns",
+    "database-migrations",
+    "e2e-testing",
+    "deployment-patterns",
+    "docker-patterns",
+    "architecture-decision-records",
+    "blueprint",
+    "contract-first",
+    "delivery-gate",
+    "search-first",
+    "codebase-onboarding",
+    "claude-devfleet"
+  ],
+  "stacks": {
+    "python": {
+      "agents": {
+        "senior": [
+          "python-reviewer"
+        ]
+      },
+      "skills": [
+        "python-patterns",
+        "python-testing"
+      ]
+    },
+    "typescript": {
+      "agents": {
+        "senior": [
+          "typescript-reviewer"
+        ]
+      },
+      "skills": [
+        "nextjs-turbopack",
+        "nestjs-patterns",
+        "prisma-patterns"
+      ]
+    },
+    "react": {
+      "agents": {
+        "senior": [
+          "react-reviewer",
+          "react-build-resolver"
+        ]
+      },
+      "skills": [
+        "react-patterns",
+        "react-testing",
+        "react-performance",
+        "frontend-a11y"
+      ]
+    },
+    "vue": {
+      "agents": {
+        "senior": [
+          "vue-reviewer"
+        ]
+      },
+      "skills": [
+        "vue-patterns",
+        "nuxt4-patterns",
+        "vite-patterns"
+      ]
+    },
+    "go": {
+      "agents": {
+        "senior": [
+          "go-reviewer",
+          "go-build-resolver"
+        ]
+      },
+      "skills": [
+        "golang-patterns",
+        "golang-testing"
+      ]
+    },
+    "rust": {
+      "agents": {
+        "senior": [
+          "rust-reviewer",
+          "rust-build-resolver"
+        ]
+      },
+      "skills": [
+        "rust-patterns",
+        "rust-testing"
+      ]
+    },
+    "java": {
+      "agents": {
+        "senior": [
+          "java-reviewer",
+          "java-build-resolver"
+        ]
+      },
+      "skills": [
+        "java-coding-standards",
+        "springboot-patterns",
+        "springboot-tdd",
+        "jpa-patterns"
+      ]
+    },
+    "kotlin": {
+      "agents": {
+        "senior": [
+          "kotlin-reviewer",
+          "kotlin-build-resolver"
+        ]
+      },
+      "skills": [
+        "kotlin-patterns",
+        "kotlin-testing",
+        "kotlin-coroutines-flows"
+      ]
+    },
+    "swift": {
+      "agents": {
+        "senior": [
+          "swift-reviewer",
+          "swift-build-resolver"
+        ]
+      },
+      "skills": [
+        "swiftui-patterns",
+        "swift-concurrency-6-2"
+      ]
+    },
+    "cpp": {
+      "agents": {
+        "senior": [
+          "cpp-reviewer",
+          "cpp-build-resolver"
+        ]
+      },
+      "skills": [
+        "cpp-coding-standards",
+        "cpp-testing"
+      ]
+    },
+    "csharp": {
+      "agents": {
+        "senior": [
+          "csharp-reviewer"
+        ]
+      },
+      "skills": [
+        "csharp-testing",
+        "dotnet-patterns"
+      ]
+    },
+    "php": {
+      "agents": {
+        "senior": [
+          "php-reviewer"
+        ]
+      },
+      "skills": [
+        "laravel-patterns",
+        "laravel-tdd"
+      ]
+    },
+    "django": {
+      "agents": {
+        "senior": [
+          "django-reviewer",
+          "django-build-resolver"
+        ]
+      },
+      "skills": [
+        "django-patterns",
+        "django-tdd",
+        "django-security"
+      ]
+    },
+    "fastapi": {
+      "agents": {
+        "senior": [
+          "fastapi-reviewer"
+        ]
+      },
+      "skills": [
+        "fastapi-patterns"
+      ]
+    },
+    "flutter": {
+      "agents": {
+        "senior": [
+          "flutter-reviewer",
+          "dart-build-resolver"
+        ]
+      },
+      "skills": [
+        "dart-flutter-patterns",
+        "flutter-dart-code-review"
+      ]
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "description": "Deep research, literature review, knowledge management.",
+  "agents": {
+    "po": [],
+    "senior": [],
+    "junior": [
+      "docs-lookup"
+    ]
+  },
+  "skills": [
+    "deep-research",
+    "research-ops",
+    "market-research",
+    "exa-search",
+    "iterative-retrieval",
+    "scientific-thinking-literature-review",
+    "knowledge-ops",
+    "documentation-lookup"
+  ]
+}

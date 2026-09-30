@@ -1,0 +1,27 @@
+{
+  "description": "Campaigns, content, SEO, social distribution, market research.",
+  "agents": {
+    "po": [],
+    "senior": [
+      "marketing-agent",
+      "seo-specialist"
+    ],
+    "junior": []
+  },
+  "skills": [
+    "marketing-campaign",
+    "seo",
+    "content-engine",
+    "article-writing",
+    "brand-voice",
+    "brand-discovery",
+    "crosspost",
+    "social-publisher",
+    "market-research",
+    "lead-intelligence",
+    "growth-log",
+    "competitive-report-structure",
+    "competitive-platform-analysis",
+    "x-api"
+  ]
+}

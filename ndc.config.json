@@ -1,0 +1,27 @@
+{
+  "usage": {
+    "source": "claude",
+    "command": null,
+    "timeout_seconds": 90,
+    "cache_seconds": 120,
+    "file": "~/.ndc/usage.json",
+    "max_age_seconds": 900
+  },
+  "guardian": {
+    "winddown_remaining_pct": 30,
+    "hard_floor_remaining_pct": 5,
+    "safety_factor": 1.3
+  },
+  "models": {
+    "po": "opus",
+    "senior": "sonnet",
+    "junior": "haiku"
+  },
+  "escalate_after_failures": 1,
+  "router": {
+    "min_samples": 5,
+    "min_success_rate": 0.7
+  },
+  "verify_timeout_seconds": 900,
+  "claude_args": []
+}

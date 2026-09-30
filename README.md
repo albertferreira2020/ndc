@@ -1,0 +1,56 @@
+# NDC: Nonstop Development Crew
+
+Continuous development by agents that respect usage limits.
+
+NDC builds on [ECC](https://github.com/affaan-m/ECC) (vendored, unmodified, in `vendor/ecc/`) and adds what ECC lacks:
+
+| Piece | What it does |
+|---|---|
+| **Domains** (`domains/*/team.json`) | The whole catalog stays in the repo, but only the team for the current job is activated in a project (software, marketing, research, infra, ml, healthcare, opensource). `core` is always on. |
+| **Usage guardian** (`ndc/guardian.py`) | Predicts what the next task costs (measured p80 per complexity class, conservative defaults until history exists) and decides `GO`, `WIND_DOWN` (low budget, only tasks that fit) or `STOP`. Checks every window (session and weekly). |
+| **Queue** (`ndc/store.py`) | SQLite task queue with dependencies, failure counts and per-run usage history. |
+| **Classifier** (`ndc/classify.py`) | Free, deterministic floor for complexity and risk (risk words, file count). The PO can raise a task, never lower it below the floor. |
+| **Routing** (`ndc/router.py`, `core/agents/po.md`) | By kind, risk and complexity: explore/docs/chore/test go to haiku, M/L work and anything high-risk to sonnet, planning and XL to opus. A failure moves the task up one tier; a class where haiku succeeds under 70% (5+ runs) is moved up automatically. |
+| **Gates** (`--verify`, `--expect-red`) | A task only counts as done if its command passes. Haiku-written tests must fail first, so vacuous tests are rejected. Cheap models fail cheaply. |
+| **Briefs** | Haiku explore/test output is injected into dependent tasks so the expensive model does not re-read the codebase. |
+| **Handoff** (`ndc/handoff.py`) | On a stop, writes done / pending / blocked / notes so a fresh session starts with context. |
+| **Runner** (`ndc/runner.py`) | Loop: guard, pick the first task that fits, dispatch via `claude -p --model <m>`, record the usage delta, repeat. On STOP it writes the handoff and can sleep until the reset (`--wait`). |
+
+## Quick start
+
+```bash
+export PYTHONPATH=/path/to/NDC NDC_ROOT=/path/to/NDC     # or `pip install -e .` later
+cd my-project
+python3 -m ndc domains
+python3 -m ndc activate software --stack python,react    # only this team is active
+python3 -m ndc task add "Add login" --desc "acceptance: ..." --complexity M
+python3 -m ndc usage set --session 40 --session-resets 2026-09-30T15:00:00+00:00
+python3 -m ndc run                  # dry run: shows routing and guard decisions, changes nothing
+python3 -m ndc run --execute --wait # really dispatches tasks
+```
+
+Switching teams: `activate marketing` replaces the previous domain (core stays); `activate marketing --add` keeps it. NDC only removes files it created and refuses to overwrite yours.
+
+## When monitoring starts
+
+After every finished task the runner has a fresh `/usage` reading. It checks whether the remaining budget covers the whole pending queue (estimated per task, in queue order, all windows). The first time it does not, `MONITORING ON` is logged with how many tasks still fit and a handoff checkpoint is written, so context survives even if the session dies. From then on only tasks that fit are started; when none fits, the runner stops, writes the handoff and (with `--wait`) sleeps until the reset. The fixed 30% threshold still applies as a second trigger.
+
+## Usage data
+
+Default source (`usage.source: "claude"`): NDC runs `claude -p "/usage"` and parses the session and weekly lines (percent used and reset time, in the timezone the command prints). No credentials, no interactive session needed. Results are cached for 2 minutes in `~/.ndc/usage.json`; the runner forces a fresh reading before and after every dispatched task so it can measure each task's real cost.
+
+Rules the guardian follows: if `/usage` cannot be run or its text is not recognised, usage is "unknown" and the runner refuses to start tasks (`--ignore-usage` overrides). A window past its reset time counts as 0% used, so `--wait` can resume after a reset.
+
+Alternatives: `usage.source: "file"` reads the same JSON from a file, fed by `ndc statusline` (a Claude Code statusline hook using `rate_limits.five_hour` / `seven_day`) or by `ndc usage set`; `"command"` runs your own command that prints that JSON.
+
+**Limits:** the parser depends on the current `/usage` wording and is strict on purpose, so a format change fails closed instead of guessing. I did not measure whether `/usage` itself costs model tokens. Only the session and "all models" weekly windows are read; per-model weekly limits are ignored.
+
+## Status
+
+v0.1. Guardian, queue, router, handoff, activator and runner are implemented and covered by `python3 -m unittest discover -s tests`. Not implemented: the PO agent actually creating the backlog end to end (the agent prompts exist in `core/agents/`), DevFleet integration (see `docs/ARCHITECTURE.md`), and the "new session" hand-off inside a live interactive session (use `ndc resume-prompt`).
+
+`/usage` reports whole percentages, so a task cheaper than one point is recorded as 0.5. Estimates for small tasks stay coarse.
+
+The default cost estimates in `ndc/guardian.py` are assumptions, not measurements. They are replaced by real history after 3 runs per class and window.
+
+License: MIT. ECC is (c) Affaan Mustafa, MIT, see `vendor/ecc/LICENSE`.

@@ -1,0 +1,26 @@
+{
+  "description": "Networking, homelab, Kubernetes, deployment.",
+  "agents": {
+    "po": [],
+    "senior": [
+      "network-architect",
+      "network-config-reviewer",
+      "network-troubleshooter",
+      "homelab-architect"
+    ],
+    "junior": []
+  },
+  "skills": [
+    "kubernetes-patterns",
+    "docker-patterns",
+    "deployment-patterns",
+    "network-bgp-diagnostics",
+    "network-config-validation",
+    "network-interface-health",
+    "homelab-network-setup",
+    "homelab-network-readiness",
+    "homelab-vlan-segmentation",
+    "homelab-wireguard-vpn",
+    "homelab-pihole-dns"
+  ]
+}
