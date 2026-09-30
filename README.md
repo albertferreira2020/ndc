@@ -63,7 +63,7 @@ ndc task add "Add login" --desc "acceptance: ..." --kind work --verify "npm test
 ndc uninstall                                 # removes everything NDC installed (--purge also deletes .ndc/)
 ```
 
-Stacks: `activate software --stack node` replaces the previous stacks; `--add` keeps them.
+Stacks: python, node, react, react-native, postgres, mysql, redis, clickhouse and devops (NDC's own skills in `ndc/catalog/core/skills/`: Traefik, Docker Compose/Swarm, Portainer, GitHub Actions deploy; plus ECC's kubernetes and canary-watch). `activate software --stack node` replaces the previous stacks; `--add` keeps them.
 
 ## How `ndc plan` stays safe
 

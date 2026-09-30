@@ -136,7 +136,8 @@ def activate(names: list[str], target: Path, cfg: dict, stacks=(), add=False, gi
         dst = sdir / sk
         if dst.exists() or dst.is_symlink():
             _remove(dst)
-        shutil.copytree(root / "vendor/ecc/skills" / sk, dst, ignore=shutil.ignore_patterns(".DS_Store"))  # copies, not links: portable
+        own = root / "core/skills" / sk  # NDC's own skills win over ECC's
+        shutil.copytree(own if own.is_dir() else root / "vendor/ecc/skills" / sk, dst, ignore=shutil.ignore_patterns(".DS_Store"))  # copies, not links: portable
     for g in sorted(wanted_rules):
         dst = rdir / g
         if dst.exists():

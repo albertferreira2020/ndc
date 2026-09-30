@@ -395,7 +395,7 @@ class ActivatorTests(unittest.TestCase):
                     for a in lvl:
                         self.assertTrue((root / "vendor/ecc/agents" / f"{a}.md").exists(), a)
                 for s in g["skills"]:
-                    self.assertTrue((root / "vendor/ecc/skills" / s / "SKILL.md").exists(), s)
+                    self.assertTrue(any((root / b / s / "SKILL.md").exists() for b in ("core/skills", "vendor/ecc/skills")), s)
             for g in groups:
                 for c in g.get("commands", []):
                     self.assertTrue((root / "vendor/ecc/commands" / f"{c}.md").exists(), c)
@@ -1705,6 +1705,12 @@ class EccExtrasTests(unittest.TestCase):
         self.assertFalse((cd / "plan.md").exists())
         activator.uninstall(t)
         self.assertFalse((t / ".claude").exists())
+
+    def test_devops_stack_installs_ndc_own_skills(self):
+        t = Path(tempfile.mkdtemp())
+        activator.activate(["software"], t, CFG, ["devops"])
+        for sk in ("traefik", "portainer", "docker-compose-swarm", "github-actions-deploy", "kubernetes-patterns"):
+            self.assertTrue((t / ".claude/skills" / sk / "SKILL.md").exists(), sk)
 
     def test_commands_refuse_to_overwrite_user_files(self):
         t = Path(tempfile.mkdtemp())

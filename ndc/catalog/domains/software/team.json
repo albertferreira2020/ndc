@@ -161,6 +161,21 @@
       ],
       "rules": [],
       "commands": []
+    },
+    "devops": {
+      "agents": {},
+      "skills": [
+        "docker-compose-swarm",
+        "traefik",
+        "portainer",
+        "github-actions-deploy",
+        "kubernetes-patterns",
+        "canary-watch"
+      ],
+      "rules": [],
+      "commands": [
+        "pm2"
+      ]
     }
   },
   "rules": [
