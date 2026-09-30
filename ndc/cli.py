@@ -7,7 +7,8 @@ import shlex
 import sys
 from pathlib import Path
 
-from . import activator, classify, handoff, plan as planner, quality, runner, store
+from . import activator, classify, handoff, hooks as hooklib, parallel, plan as planner, quality, runner, scan as scanner, store
+from .worktree import GitError
 from .config import load_config
 from .guardian import decide
 from .router import route
@@ -30,6 +31,7 @@ def main(argv=None) -> int:
     a.add_argument("--stack", default="", help="comma list, e.g. python,react")
     a.add_argument("--add", action="store_true", help="keep already active domains")
     a.add_argument("--gitignore", action="store_true", help="hide NDC files via .gitignore instead of .git/info/exclude")
+    a.add_argument("--no-rules", action="store_true", help="do not install the always-loaded coding rules")
 
     i = sub.add_parser("init", help="prepare a project: create .ndc/ and hide NDC files from git")
     i.add_argument("--target", default=".")
@@ -84,12 +86,31 @@ def main(argv=None) -> int:
     se.add_argument("--model", help="default: the senior model from the config")
     se.add_argument("--print", action="store_true", help="only print the prompt and the command")
     sub.add_parser("checks", help="show the project checks NDC runs as a regression gate")
+    hk = sub.add_parser("hooks", help="opt-in runtime hooks copied from ECC (safety guards and session memory)")
+    hs = hk.add_subparsers(dest="hcmd", required=True)
+    he = hs.add_parser("enable", help="install the hooks of a profile into this project (needs node)")
+    he.add_argument("--profile", choices=hooklib.PROFILES, help="default: hooks.profile in the config (standard)")
+    he.add_argument("--target", default=".")
+    hd = hs.add_parser("disable", help="remove the hooks NDC installed (your own hooks are untouched)")
+    hd.add_argument("--target", default=".")
+    hst = hs.add_parser("status")
+    hst.add_argument("--target", default=".")
+    hl = hs.add_parser("list", help="every available hook, its profiles and whether it runs in NDC's own task sessions")
+    hl.add_argument("--profile", choices=hooklib.PROFILES)
+    sc = sub.add_parser("scan", help="security scan: secrets, risky code, and an audit of the Claude Code config")
+    sc.add_argument("--path", action="append", help="limit to these files or folders (repeatable)")
+    sc.add_argument("--no-config", action="store_true", help="skip the .claude / MCP / CLAUDE.md audit")
+    sc.add_argument("--include-managed", action="store_true", help="also audit agents, skills and rules NDC installed")
+    sc.add_argument("--fail-on", default="high", choices=["high", "medium", "low", "never"])
+    sc.add_argument("--json", action="store_true")
 
     r = sub.add_parser("run", help="run the queue (dry run unless --execute)")
     r.add_argument("--execute", action="store_true", help="dispatch tasks to `claude -p`")
     r.add_argument("--ignore-usage", action="store_true", help="run even when usage is unknown")
     r.add_argument("--wait", action="store_true", help="sleep until the limit resets, then continue")
     r.add_argument("--timeout", type=int, default=3600)
+    r.add_argument("--parallel", type=int, default=1, metavar="N",
+                   help="run up to N ready tasks at once, each in its own git worktree (needs --execute and a git repo)")
     r.add_argument("--goal", help="if the queue is empty, let the PO plan this goal first (needs --yes)")
     r.add_argument("--yes", action="store_true", help="approve the PO's backlog without asking")
 
@@ -97,9 +118,18 @@ def main(argv=None) -> int:
     cfg = load_config()
     try:
         return _dispatch(args, cfg)
-    except (KeyError, ValueError, FileExistsError, planner.PlanError) as e:
+    except (KeyError, ValueError, FileExistsError, planner.PlanError, GitError) as e:
         print(f"error: {e.args[0] if isinstance(e, KeyError) else e}", file=sys.stderr)
         return 2
+
+
+def _report_rules(m):
+    if not m.get("rules"):
+        print("rules: none installed" + (" (--no-rules)" if m.get("no_rules") else ""))
+        return
+    r = activator.rules_footprint(m["rules"])
+    print(f"rules: {r['files']} files ({', '.join(m['rules'])}); loaded every session: {r['always_bytes'] / 1024:.0f} KB "
+          f"(~{r['always_bytes'] // 4:,} tokens), only when matching files are opened: {r['lazy_bytes'] / 1024:.0f} KB")
 
 
 def _report_ignore(tgt, manifest, f=...):
@@ -135,6 +165,7 @@ def _plan(goal, cfg, db, yes, activate, retries, ignore_usage, append) -> bool:
     if activate:
         m = activator.activate(plan["domains"], Path.cwd(), cfg, plan.get("stacks", []), add=True)
         print(f"active: core + {', '.join(m['domains'])}  |  {len(m['agents'])} agents, {len(m['skills'])} skills")
+        _report_rules(m)
     inserted = planner.insert(db, plan)
     print(f"{len(inserted)} tasks added. Next: ndc run (dry run) or ndc run --execute")
     return True
@@ -149,8 +180,10 @@ def _dispatch(args, cfg) -> int:
         return 0
     if args.cmd == "activate":
         tgt = Path(args.target).resolve()
-        m = activator.activate(args.domains, tgt, cfg, _csv(args.stack), args.add, True if args.gitignore else None)
+        m = activator.activate(args.domains, tgt, cfg, _csv(args.stack), args.add, True if args.gitignore else None,
+                               False if args.no_rules else None)
         print(f"active: core + {', '.join(m['domains']) or '(none)'}  |  {len(m['agents'])} agents, {len(m['skills'])} skills")
+        _report_rules(m)
         _report_ignore(tgt, m)
         return 0
     if args.cmd == "init":
@@ -161,12 +194,58 @@ def _dispatch(args, cfg) -> int:
         return 0
     if args.cmd == "uninstall":
         r = activator.uninstall(Path(args.target).resolve(), args.purge)
-        print(f"removed {r['agents']} agents, {r['skills']} skills; ignore rules removed: {r['ignore_block_removed']}"
+        print(f"removed {r['agents']} agents, {r['skills']} skills, {r['rules']} rule groups; ignore rules removed: {r['ignore_block_removed']}"
               + ("; .ndc/ deleted" if r["purged"] else "; .ndc/ kept (use --purge to delete queue and history)"))
         return 0
     if args.cmd == "status":
         print(json.dumps(activator.read_manifest(Path(args.target).resolve()), indent=2))
         return 0
+    if args.cmd == "hooks":
+        tgt = Path(getattr(args, "target", ".")).resolve()
+        if args.hcmd == "list":
+            for h in (hooklib.selected(args.profile) if args.profile else hooklib.registry()):
+                where = "runner+interactive" if h["runner"] else "interactive only"
+                print(f"{h['id']:34} {h['event']:13} {h['profiles']:23} {where:19} {h['desc']}")
+            return 0
+        if args.hcmd == "enable":
+            profile = args.profile or cfg.get("hooks", {}).get("profile", "standard")
+            st = hooklib.enable(tgt, profile)
+            print(f"enabled {len(st['ids'])} hooks (profile {profile}) in {hooklib.SETTINGS}; runtime in .ndc/runtime, "
+                  "memory in .ndc/agent-data")
+            print("  session-start injects the last session summary at every interactive session start (tokens)")
+            print(f"  NDC's own task sessions skip: {', '.join(cfg.get('hooks', {}).get('runner_disabled', []))}")
+            return 0
+        if args.hcmd == "disable":
+            r = hooklib.disable(tgt)
+            print(f"removed NDC hooks; runtime deleted" + ("; memory in .ndc/agent-data kept" if r["memory_kept"] else ""))
+            return 0
+        st = hooklib.status(tgt)
+        print(json.dumps(st, indent=2))
+        return 1 if st["problems"] else 0
+    if args.cmd == "scan":
+        root = Path.cwd()
+        files = None
+        if args.path:
+            from .snapshot import SKIP_DIRS
+            files = []
+            for p in args.path:
+                q = (root / p)
+                if q.is_dir():
+                    files += [x.relative_to(root) for x in q.rglob("*") if x.is_file() and not (set(x.relative_to(root).parts) & SKIP_DIRS)]
+                elif q.is_file():
+                    files.append(q.relative_to(root))
+                else:
+                    raise ValueError(f"no such path: {p}")
+        found = scanner.scan(root, files, config=not args.no_config, include_managed=args.include_managed)
+        if args.json:
+            print(json.dumps([f.__dict__ for f in found], indent=2))
+        else:
+            for f in found:
+                print(f)
+            n = {s: sum(1 for f in found if f.severity == s) for s in ("high", "medium", "low")}
+            print(f"{n['high']} high, {n['medium']} medium, {n['low']} low"
+                  + ("" if found else "  (heuristics: a clean scan is not proof of safety)"))
+        return 1 if args.fail_on != "never" and scanner.at_least(found, args.fail_on) else 0
     if args.cmd == "statusline":
         from .statusline import update
         try:
@@ -259,6 +338,11 @@ def _dispatch(args, cfg) -> int:
                 return 1
         elif args.goal:
             print("queue already has pending tasks: skipping the PO")
-        res = runner.run(db, cfg, args.execute, args.ignore_usage, args.wait, args.timeout)
+        if args.parallel > 1:
+            if not args.execute:
+                raise ValueError("--parallel needs --execute: a dry run has nothing to run in parallel")
+            res = parallel.run_parallel(db, cfg, args.parallel, args.ignore_usage, args.wait, args.timeout)
+        else:
+            res = runner.run(db, cfg, args.execute, args.ignore_usage, args.wait, args.timeout)
         return 0 if res == "idle" else 3
     return 1

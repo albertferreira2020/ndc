@@ -17,17 +17,21 @@ NDC builds on [ECC](https://github.com/affaan-m/ECC) (vendored, unmodified, in `
 | **Fresh sessions** | Every attempt runs in a new session; a retry is seeded with a report of the failed attempt. `ndc session` opens a new interactive session seeded with the handoff. |
 | **Briefs** | Haiku explore/test output is injected into dependent tasks so the expensive model does not re-read the codebase. |
 | **Handoff** (`ndc/handoff.py`) | On a stop, writes done / pending / blocked / notes so a fresh session starts with context. |
+| **Parallel tasks** (`ndc/parallel.py`, `ndc/worktree.py`) | `ndc run --execute --parallel N` runs up to N ready tasks at once, each in its own git worktree, and merges the ones that pass. The budget guard reserves the cost of every running task. |
+| **Security scan** (`ndc/scan.py`) | `ndc scan`: secrets, risky code patterns and an audit of the Claude Code config. Also a gate on every task. Offline, no tokens. |
+| **Rules** (`ndc/catalog/vendor/ecc/rules/`) | ECC's coding rules, installed per domain and stack. Most are scoped by file path, so they load only when needed. |
+| **Hooks and memory** (`ndc/hooks.py`, `ndc/catalog/runtime/`) | Opt-in (`ndc hooks enable`): ECC's safety hooks (block `--no-verify`, protect linter configs) and session memory, audited and confined to `.ndc/`. |
 | **Runner** (`ndc/runner.py`) | Loop: guard, pick the first task that fits, dispatch via `claude -p --model <m>`, record the usage delta, repeat. On STOP it writes the handoff and can sleep until the reset (`--wait`). |
 
 ## Install
 
 ```bash
 python3 -m venv ~/.ndc-venv
-~/.ndc-venv/bin/pip install ndc-0.4.0-py3-none-any.whl     # the whole catalog is inside the package
+~/.ndc-venv/bin/pip install ndc-0.5.0-py3-none-any.whl     # the whole catalog is inside the package
 ln -s ~/.ndc-venv/bin/ndc ~/.local/bin/ndc                 # optional: `ndc` on your PATH
 ```
 
-(`pipx install ndc-0.4.0-py3-none-any.whl` works too.) Python 3.9+, standard library only.
+(`pipx install ndc-0.5.0-py3-none-any.whl` works too.) Python 3.9+, standard library only.
 
 ## Quick start (inside any project)
 
@@ -74,10 +78,64 @@ NDC is a support tool, not part of the product. In a project it creates only:
 | Path | What | Removed by `uninstall` |
 |---|---|---|
 | `.claude/agents/*.md`, `.claude/skills/*/` | the active team (copies, so nothing depends on where NDC is installed) | yes |
+| `.claude/rules/ndc/<group>/` | the coding rules of the active domain and stacks | yes |
+| `.claude/settings.local.json` | only with `ndc hooks enable`: the hook entries NDC owns (your own keys and hooks are preserved) | yes (the file too, if NDC created it) |
 | `.claude/.ndc-managed.json` | list of what NDC installed | yes |
-| `.ndc/` | task queue, history, handoffs, briefs | only with `--purge` |
+| `.ndc/` | task queue, history, handoffs, briefs; `runtime/` (hook scripts), `agent-data/` (hook memory), `worktrees/` (parallel runs, deleted when each task ends) | queue and memory only with `--purge`; `runtime/` on `hooks disable` |
 
 All of it is hidden from git through a marked block in `.git/info/exclude`: local, never committed, invisible to teammates, and it lists exactly the NDC paths, so your own files in `.claude/` are not ignored. Use `--gitignore` to write the block to the project's `.gitignore` instead. NDC refuses to overwrite agents or skills it did not create, warns if git already tracks an NDC file, and does nothing to the ignore rules if the folder is not a git repository. The rules in the block are rewritten on every `activate`; edit outside the markers.
+
+## Parallel tasks
+
+`ndc run --execute --parallel 3` starts up to 3 ready tasks at once. Each one gets its own git worktree on its own branch (`.ndc/worktrees/task-N`, branch `ndc/task-N`), so agents cannot trample each other's files. When a task passes all its gates, its branch is committed and merged into the branch you have checked out (`ndc: merge task #N ...`); the worktree and branch are then deleted.
+
+- **Budget:** the guardian reserves the estimated cost of every running task, so N workers never promise more quota than is left. With little budget left only one runs at a time.
+- **Conflicts:** merges are serialized. A conflict aborts the merge cleanly, fails that attempt, and the retry starts again on a fresh worktree from the updated code.
+- **Dependencies:** a task starts only after the tasks it depends on were merged, so it sees their code.
+- **Requirements:** a git repository with at least one commit, run from its root, on a branch (not detached), with a clean working tree (commit or stash first: results are merged into it). Without `--execute` there is nothing to parallelize and NDC says so.
+- **Usage deltas are not recorded** for tasks that overlapped in time (they would each be blamed for the other's usage), so cost estimates keep learning only from tasks that ran alone.
+- Retries do not keep the previous attempt's files (the worktree is discarded); the retry prompt says so.
+
+This is NDC's own implementation. ECC's DevFleet is a separate server that ECC does not ship, so it was not copied.
+
+## Security scan
+
+`ndc scan` needs no network and spends no tokens. It reports findings by severity and exits 1 when something reaches `--fail-on` (default `high`).
+
+- **Secrets** (high): AWS, GitHub, Anthropic, OpenAI, Slack, Stripe and Google keys, private keys. Generic `password = "..."` style assignments are medium, with placeholders ignored. The output never repeats the secret. Suppress a false positive on one line with `ndc:allow-secret`.
+- **Risky code patterns** (medium, heuristic): shell injection (`shell=True` with interpolation, `os.system(f"...")`), dynamic `eval`, SQL built by concatenation, unsafe `yaml.load`, `verify=False`, `innerHTML` with variables.
+- **Claude Code config audit:** `.claude/settings*.json` (`Bash(*)` and other broad permissions, `bypassPermissions`, secrets in `env`, hooks that pipe to a shell or send files out), `.mcp.json` (unpinned `npx` packages, plain-http servers, secrets in `env`), and `CLAUDE.md`, rules, agents and skills (invisible Unicode, instruction-like text such as "ignore all previous instructions"). Items NDC installed are skipped unless `--include-managed`.
+- **As a gate:** after every task, files it touched are scanned. A `high` finding fails the attempt (the retry report names the rule and file, never the secret); `medium` findings are noted. Config findings count only for config files the task touched. Turn it off with `quality.security_scan: false`.
+
+ECC's own security scan runs `npx ecc-agentshield`, an npm package downloaded at run time; NDC does not do that, so this scanner is a separate, smaller implementation covering the categories ECC's skill lists. The ECC `security-scan` and `security-review` skills are still installed for the software domain.
+
+## Rules
+
+`ndc activate` also installs ECC's coding rules into `.claude/rules/ndc/`: `common` for software, plus the rules of each stack (`--stack python` adds `python`, `react` adds `react` and `web`, and so on). The activation output states the cost: for `software` + `python` the always-loaded part is about 18 KB (~4,600 tokens) per session; the language rules carry `paths:` frontmatter, so Claude Code loads them only when a matching file is opened. `--no-rules` skips them (and remembers that). Rules are context, not enforcement: for enforcement use hooks or the gates.
+
+## Hooks and memory (opt-in)
+
+Hooks run code on every tool call, so NDC never installs them implicitly. `ndc hooks enable [--profile minimal|standard|strict]` needs Node.js and does this:
+
+- copies an audited subset of ECC's hook scripts into `.ndc/runtime/` (28 files, no network access, no model calls; see `ndc/catalog/runtime/UPSTREAM.md`);
+- registers the hooks of the profile in `.claude/settings.local.json` (personal, hidden from git); anything else in that file is preserved, and NDC refuses to touch it if it is invalid JSON or committed to git;
+- keeps all hook state inside `.ndc/agent-data/`.
+
+`ndc hooks list` shows each hook. In short:
+
+| Kind | Hooks | Profiles |
+|---|---|---|
+| Safety | block `git --no-verify`; block edits to existing linter/formatter configs; check staged files at commit (secrets, `debugger`) | first: all; second: standard, strict; third: strict |
+| Session memory | save a summary at the end of a session and load it at the next start; log before compaction; suggest `/compact` | standard, strict (start/save also minimal) |
+| Learning and metrics | extract patterns from long sessions; local token and cost metrics | all |
+
+Two things differ from a stock ECC install, on purpose:
+- ECC's session-end and pre-compact hooks call `claude --model haiku -p` to write a summary. NDC always sets `ECC_SKIP_LLM_SUMMARY=1`, so a hook never spends tokens behind your back.
+- NDC's runner opens one session per task, and the memory hooks inject context at every session start. So NDC's own sessions (tasks, PO, reviewer) run with the memory hooks disabled (`hooks.runner_disabled`) and keep the safety hooks, which matter most when an agent runs unattended.
+
+Cost to know: `session:start` injects the previous session summary (a short summary was about 300 tokens; it grows with the summary). Recalled memory is wrapped as "historical reference, not live instructions".
+
+Not copied on purpose: gateguard (blocks edits until files are read), MCP health checks and plan-canvas (network, browser), the background observer of continuous-learning v2 (spawns `claude`), the PostToolUse dispatchers (run `npx`), desktop notifications. Hook commands use POSIX shell syntax (macOS and Linux), and absolute paths: if you move the project, run `ndc hooks enable` again (`ndc hooks status` tells you).
 
 ## Quality beyond `--verify`
 
@@ -117,18 +175,20 @@ Alternatives: `usage.source: "file"` reads the same JSON from a file, fed by `nd
 
 ## Status
 
-v0.4. Implemented and covered by `python3 -m unittest discover -s tests` (97 tests): guardian and queue-wide budget monitoring, router, classifier, gates, handoff, activator and footprint control, runner, the autonomous PO (`ndc plan`, `ndc run --goal`), the quality gates and `ndc session`. The gates run against a fake `claude` in the tests, so no tokens are spent testing them.
+v0.5. Implemented and covered by `python3 -m unittest discover -s tests` (153 tests): everything above. The runner, gates, parallel mode and scanner are tested against a fake `claude` and real git repositories, so no tokens are spent testing them.
 
-Proven on real runs: a 7-task project built by haiku and sonnet from a backlog written by hand, and a backlog written by the PO itself from a one-line goal (about 40 s). See the release notes for the end-to-end result of executing a PO-written backlog.
+Proven on real runs: projects built by haiku and sonnet from hand-written and PO-written backlogs; a real Claude Code session that accepted NDC's hook settings and blocked `git commit --no-verify` (the commit count did not change); a real parallel run where two haiku tasks ran at once, merged, and a dependent third task saw both results.
 
 Not validated or not built:
 - Monitoring under a genuinely tight usage limit, and resuming after a reset (`--wait`): simulated tests only.
 - The PO has been tried on small goals only. On large or ambiguous goals it may produce weak backlogs; review them.
-- The verify blocklist is not a sandbox.
-- No scheduler: NDC runs only when you invoke it. No parallel tasks or worktrees (ECC's DevFleet is not wired in). It cannot swap an interactive session that is already open (see New sessions).
-- The quality gates are heuristics: passing them does not mean the code is correct. The reviewer is a model and can miss things or, rarely, flag good code; only blockers stop a task. Regression checks are only as good as the project's own tests.
+- Parallel mode was tried live with 2 workers on trivial tasks. Real merge conflicts and larger repositories are covered by tests only.
+- The model reviewer has not run live yet. The memory hooks were tested against real ECC scripts with synthetic transcripts, not yet across many real sessions.
+- The verify blocklist and the security scan are heuristics, not a sandbox or a proof of safety.
+- No scheduler: NDC runs only when you invoke it. It cannot swap an interactive session that is already open (see New sessions).
+- The quality gates are heuristics: passing them does not mean the code is correct. Regression checks are only as good as the project's own tests.
 - Only the software domain has a complete team; the others are thin.
-- Tested on macOS with Python 3.9.
+- Hooks need Node.js and POSIX shell syntax. Tested on macOS with Python 3.9.
 
 `/usage` reports whole percentages, so a task cheaper than one point is recorded as 0.5. Estimates for small tasks stay coarse. The default cost estimates in `ndc/guardian.py` are assumptions, not measurements, replaced by real history after 3 runs per class and window.
 

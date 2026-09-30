@@ -18,6 +18,10 @@ def patterns(manifest: dict, state_only: bool = False) -> list[str]:
     out = ["/.ndc/", "/.claude/.ndc-managed.json"]
     out += [f"/.claude/agents/{a}.md" for a in manifest.get("agents", [])]
     out += [f"/.claude/skills/{s}/" for s in manifest.get("skills", [])]
+    if manifest.get("rules"):
+        out.append("/.claude/rules/ndc/")
+    if manifest.get("hooks"):
+        out.append("/.claude/settings.local.json")
     return out
 
 
@@ -64,3 +68,8 @@ def tracked(target: Path, manifest: dict) -> list[str]:
     paths = [p.strip("/") for p in patterns(manifest)]
     r = subprocess.run(["git", "-C", str(target), "ls-files", "--", *paths], capture_output=True, text=True)
     return r.stdout.split() if r.returncode == 0 else []
+
+
+def is_tracked(target: Path, rel: str) -> bool:
+    r = subprocess.run(["git", "-C", str(target), "ls-files", "--error-unmatch", "--", rel], capture_output=True, text=True)
+    return r.returncode == 0

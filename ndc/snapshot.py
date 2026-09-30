@@ -9,6 +9,9 @@ SKIP_DIRS = {".git", ".ndc", ".claude", "node_modules", "__pycache__", ".venv", 
              ".pytest_cache", ".mypy_cache", "target"}
 MAX_FILES = 5000
 MAX_BYTES = 2_000_000
+# `.claude/` is skipped because NDC installs agents, skills and rules there, but these hold behavior and
+# permissions: a task that edits them must be visible to every gate.
+TRACKED_CLAUDE = (".claude/settings.json", ".claude/settings.local.json", ".claude/CLAUDE.md")
 
 
 def take(root: Path):
@@ -28,6 +31,13 @@ def take(root: Path):
                 out[str(p.relative_to(root))] = hashlib.sha1(p.read_bytes()).hexdigest()
             except OSError:
                 continue
+    for rel in TRACKED_CLAUDE:
+        p = root / rel
+        try:
+            if p.is_file() and p.stat().st_size <= MAX_BYTES:
+                out[rel] = hashlib.sha1(p.read_bytes()).hexdigest()
+        except OSError:
+            continue
     return out
 
 

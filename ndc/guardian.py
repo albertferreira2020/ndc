@@ -34,14 +34,15 @@ def estimate(window: str, complexity: str, samples: list[float]) -> tuple[float,
     return table[complexity], "default (no history yet)"
 
 
-def decide(usage: Usage, complexity: str, cfg: dict, history_fn) -> Decision:
+def decide(usage: Usage, complexity: str, cfg: dict, history_fn, reserved: dict | None = None) -> Decision:
+    """`reserved`: percentage points per window already promised to tasks running right now (parallel mode)."""
     g = cfg["guardian"]
     floor, winddown, safety = g["hard_floor_remaining_pct"], g["winddown_remaining_pct"], g["safety_factor"]
     stops, winding, notes = [], False, []
     for w in usage.windows:
         est, basis = estimate(w.name, complexity, history_fn(w.name, complexity))
         need = est * safety
-        left = w.remaining_pct
+        left = w.remaining_pct - (reserved or {}).get(w.name, 0.0)
         notes.append(f"{w.name}: {left:.0f}% left, need ~{need:.1f}% ({basis})")
         if left - need < floor:
             stops.append(w)

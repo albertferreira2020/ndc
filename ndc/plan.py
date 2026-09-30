@@ -11,6 +11,7 @@ import subprocess
 from pathlib import Path
 
 from . import activator, classify, store
+from .env import claude_env
 
 MAX_TASKS = 40
 # The runner executes `verify` commands in a shell, so obviously destructive ones are refused outright.
@@ -152,7 +153,8 @@ def ask_claude(prompt: str, cfg: dict, cwd: Path, model: str | None = None) -> s
     """One headless read-only call (PO by default). Never the runner's edit permissions."""
     cmd = ["claude", "-p", prompt, "--model", model or cfg["models"]["po"], "--allowedTools", "Read Grep Glob"]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, timeout=cfg.get("plan_timeout_seconds", 900))
+        r = subprocess.run(cmd, capture_output=True, text=True, cwd=cwd, timeout=cfg.get("plan_timeout_seconds", 900),
+                           env=claude_env(cfg))
     except (subprocess.TimeoutExpired, FileNotFoundError) as e:
         raise PlanError(f"could not run the PO: {e}") from e
     if r.returncode != 0:

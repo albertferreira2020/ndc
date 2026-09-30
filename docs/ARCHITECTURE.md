@@ -21,9 +21,20 @@ STOP -> handoff report -> (wait for reset) -> next task
 - **Fail closed on unknown usage.** Stale or missing data stops the runner instead of guessing.
 - **Dry run by default.** `ndc run` never dispatches without `--execute`.
 
-## DevFleet (ECC `claude-devfleet`)
+## Parallel tasks and DevFleet
 
-Kept in the `software` domain as a skill. It needs a separate server on port 18801 and is not wired into the runner: the NDC runner already provides a DAG (task dependencies) and per-task model choice. Worktree isolation and parallel agents are what DevFleet would add; integrate it once the sequential loop is proven.
+`ndc run --parallel N` is implemented natively (`ndc/parallel.py`, `ndc/worktree.py`): a thread per task, each with its own SQLite connection, git worktree and branch; git operations that touch the main tree are serialized by one lock; the budget guard reserves the estimated cost of running tasks. ECC's `claude-devfleet` skill documents a separate server (port 18801) that ECC does not ship, so there was nothing to copy. The skill is still installed for the software domain.
+
+## What comes from ECC and what is NDC's own
+
+| Capability | Source |
+|---|---|
+| Agents, skills | ECC, copied unmodified (`vendor/ecc`) |
+| Rules | ECC, copied unmodified, installed per stack |
+| Hook scripts and memory persistence | ECC, audited subset copied unmodified (`runtime/`); registry, installer and environment are NDC's |
+| Security scan | NDC's own (ECC's needs `npx ecc-agentshield`) |
+| Parallel worktrees | NDC's own (DevFleet is an external server) |
+| Budget guard, queue, routing, PO, gates, handoff | NDC's own |
 
 ## Open items
 

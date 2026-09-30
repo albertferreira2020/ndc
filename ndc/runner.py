@@ -9,7 +9,8 @@ from pathlib import Path
 
 from dataclasses import dataclass
 
-from . import plan as planner, quality, snapshot, store
+from . import plan as planner, quality, scan, snapshot, store
+from .env import claude_env
 from .config import state_dir
 from .guardian import decide, outlook
 from .handoff import write as write_handoff
@@ -27,15 +28,16 @@ def briefs_dir() -> Path:
     return d
 
 
-def build_prompt(task) -> str:
+def build_prompt(task, tree_kept: bool = True) -> str:
     parts = [f"Task #{task['id']} ({task['complexity']}, {task['kind']}): {task['title']}", task["description"]]
     for dep in json.loads(task["depends_on"]):
         f = briefs_dir() / f"task-{dep}.md"
         if f.exists():
             parts.append(f"Context from task #{dep} (already done, do not redo it):\n{f.read_text()[:BRIEF_CAP]}")
     if task["last_report"]:
-        parts.append("This is a RETRY in a fresh session. The working tree still holds the previous attempt's changes. "
-                     "Report of that attempt:\n" + task["last_report"][:3000])
+        state = ("The working tree still holds the previous attempt's changes." if tree_kept else
+                 "The previous attempt's changes were discarded: start from the current code.")
+        parts.append(f"This is a RETRY in a fresh session. {state} Report of that attempt:\n" + task["last_report"][:3000])
     if task["verify_cmd"]:
         goal = "must FAIL (the tests are written before the implementation)" if task["expect_red"] else "must pass"
         parts.append(f"Verification command: `{task['verify_cmd']}` {goal}.")
@@ -44,12 +46,12 @@ def build_prompt(task) -> str:
     return "\n\n".join(p for p in parts if p)
 
 
-def verify(task, timeout) -> tuple[bool, str]:
+def verify(task, timeout, cwd=None) -> tuple[bool, str]:
     """Runs the task's gate. For expect_red tasks the gate passes only if the command FAILS."""
     if not task["verify_cmd"]:
         return True, ""
     try:
-        r = subprocess.run(task["verify_cmd"], shell=True, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(task["verify_cmd"], shell=True, capture_output=True, text=True, timeout=timeout, cwd=cwd)
     except subprocess.TimeoutExpired:
         return False, f"verify timed out after {timeout}s"
     tail = (r.stdout + r.stderr)[-300:]
@@ -69,10 +71,10 @@ class Outcome:
     touched: tuple = ()
 
 
-def _claude(task, model, cfg, timeout):
+def _claude(task, model, cfg, timeout, cwd=None, tree_kept=True):
     try:
-        r = subprocess.run(["claude", "-p", build_prompt(task), "--model", model, *cfg.get("claude_args", [])],
-                           capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(["claude", "-p", build_prompt(task, tree_kept), "--model", model, *cfg.get("claude_args", [])],
+                           capture_output=True, text=True, timeout=timeout, cwd=cwd, env=claude_env(cfg))
         return r.returncode == 0, (r.stdout if r.returncode == 0 else r.stderr)
     except (subprocess.TimeoutExpired, FileNotFoundError) as e:
         return False, str(e)
@@ -86,7 +88,7 @@ def _review_allowed(cfg, db) -> bool:
     return decide(us, "S", cfg, lambda w, c: store.history(db, w, c)).action != "STOP"
 
 
-def execute_task(db, cfg, task, tier, model, timeout, log=print, root=None, ask=None) -> Outcome:
+def execute_task(db, cfg, task, tier, model, timeout, log=print, root=None, ask=None, tree_kept=True) -> Outcome:
     """Dispatch one task in a fresh session, then apply the gates, cheapest first:
     verify -> read-only/protected files -> regression -> scoped review."""
     root = root or Path.cwd()
@@ -98,7 +100,7 @@ def execute_task(db, cfg, task, tier, model, timeout, log=print, root=None, ask=
     baseline = quality.run_checks(checks, root, vt)[0] if checks else None
     before = snapshot.take(root)
 
-    ok, out = _claude(task, model, cfg, timeout)
+    ok, out = _claude(task, model, cfg, timeout, cwd=root, tree_kept=tree_kept)
     after = snapshot.take(root)
     ch = snapshot.diff(before, after) if before is not None and after is not None else None
     touched = sorted(ch["added"] | ch["changed"] | ch["removed"]) if ch else []
@@ -112,7 +114,7 @@ def execute_task(db, cfg, task, tier, model, timeout, log=print, root=None, ask=
 
     if not ok:
         return fail("dispatch", out[-500:])
-    ok, vnote = verify(task, vt)
+    ok, vnote = verify(task, vt, cwd=root)
     if not ok:
         return fail("verify", vnote)
     note = vnote
@@ -126,6 +128,18 @@ def execute_task(db, cfg, task, tier, model, timeout, log=print, root=None, ask=
             if hit:
                 return fail("protected-files", "it edited test files written by an earlier test task (fix the code, "
                             f"not the tests): {', '.join(hit[:10])}")
+    if q.get("security_scan", True) and all_touched:
+        present = [p for p in all_touched if (root / p).is_file()]
+        found = scan.scan_files(root, present)
+        if scan.touches_config(present):  # config findings count only for files this task touched
+            found += [f for f in scan.scan_config(root) if f.file in set(present)]
+        high = scan.at_least(found, "high")
+        if high:
+            return fail("security", "\n".join(str(f) for f in high[:8]))
+        medium = scan.at_least(found, "medium")
+        if medium:
+            log(f"  security notes (not blocking): {len(medium)} medium finding(s), first: {medium[0]}")
+            note += f" | security: {len(medium)} medium finding(s)"
     if checks and baseline:
         good, tail = quality.run_checks(checks, root, vt)
         if not good:
@@ -172,6 +186,22 @@ def _deltas(before, after):
     return out
 
 
+class Monitor:
+    """Turns budget monitoring on (once) when the remaining budget stops covering the whole pending queue."""
+    def __init__(self):
+        self.on = False
+
+    def update(self, db, usage, cfg, queue, log):
+        o = outlook(usage, queue, cfg, lambda w, c: store.history(db, w, c))
+        if not o.all_fit and not self.on:
+            self.on = True
+            log(f"MONITORING ON: budget covers {o.covered} of {o.total} pending tasks ({o.detail})")
+            log(f"  checkpoint written: {write_handoff(db, reason='budget monitoring started')}")
+        elif o.all_fit and self.on:
+            self.on = False
+            log(f"monitoring off: budget covers all {o.total} pending tasks")
+
+
 def pick(db, usage, cfg, skip=()):
     """First ready task that fits; the queue order is the PO's priority order."""
     last = None
@@ -188,7 +218,7 @@ def pick(db, usage, cfg, skip=()):
 def run(db, cfg, execute=False, ignore_usage=False, wait=False, timeout=3600, log=print) -> str:
     store.requeue_interrupted(db)
     seen = set()  # dry run only: never mutates the queue
-    monitoring, first = False, True
+    monitor, first = Monitor(), True
     success = lambda k, c, t: store.success_rate(db, k, c, t)
     while True:
         avail = [t for t in store.ready_tasks(db) if t["id"] not in seen]
@@ -206,15 +236,7 @@ def run(db, cfg, execute=False, ignore_usage=False, wait=False, timeout=3600, lo
             usage = None
         first = False
         if usage is not None:
-            queue = [t for t in store.list_tasks(db, "pending") if t["id"] not in seen]  # whole queue, not just ready tasks
-            o = outlook(usage, queue, cfg, lambda w, c: store.history(db, w, c))
-            if not o.all_fit and not monitoring:
-                monitoring = True
-                log(f"MONITORING ON: budget covers {o.covered} of {o.total} pending tasks ({o.detail})")
-                log(f"  checkpoint written: {write_handoff(db, reason='budget monitoring started')}")
-            elif o.all_fit and monitoring:
-                monitoring = False
-                log(f"monitoring off: budget covers all {o.total} pending tasks")
+            monitor.update(db, usage, cfg, [t for t in store.list_tasks(db, "pending") if t["id"] not in seen], log)
         task, d = (avail[0], None) if usage is None else pick(db, usage, cfg, seen)
         if task is None:
             log(f"STOP: {d.reason}")

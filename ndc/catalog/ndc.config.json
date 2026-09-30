@@ -33,6 +33,17 @@
       "plan"
     ],
     "review": "risk",
-    "review_timeout_seconds": 600
+    "review_timeout_seconds": 600,
+    "security_scan": true
+  },
+  "hooks": {
+    "profile": "standard",
+    "runner_disabled": [
+      "pre:edit-write:suggest-compact",
+      "pre:compact",
+      "session:start",
+      "stop:session-end",
+      "stop:evaluate-session"
+    ]
   }
 }

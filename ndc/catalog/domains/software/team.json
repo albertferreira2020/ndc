@@ -70,6 +70,9 @@
       "skills": [
         "python-patterns",
         "python-testing"
+      ],
+      "rules": [
+        "python"
       ]
     },
     "typescript": {
@@ -82,6 +85,9 @@
         "nextjs-turbopack",
         "nestjs-patterns",
         "prisma-patterns"
+      ],
+      "rules": [
+        "typescript"
       ]
     },
     "react": {
@@ -96,6 +102,10 @@
         "react-testing",
         "react-performance",
         "frontend-a11y"
+      ],
+      "rules": [
+        "react",
+        "web"
       ]
     },
     "vue": {
@@ -108,6 +118,10 @@
         "vue-patterns",
         "nuxt4-patterns",
         "vite-patterns"
+      ],
+      "rules": [
+        "vue",
+        "web"
       ]
     },
     "go": {
@@ -120,6 +134,9 @@
       "skills": [
         "golang-patterns",
         "golang-testing"
+      ],
+      "rules": [
+        "golang"
       ]
     },
     "rust": {
@@ -132,6 +149,9 @@
       "skills": [
         "rust-patterns",
         "rust-testing"
+      ],
+      "rules": [
+        "rust"
       ]
     },
     "java": {
@@ -146,6 +166,9 @@
         "springboot-patterns",
         "springboot-tdd",
         "jpa-patterns"
+      ],
+      "rules": [
+        "java"
       ]
     },
     "kotlin": {
@@ -159,6 +182,9 @@
         "kotlin-patterns",
         "kotlin-testing",
         "kotlin-coroutines-flows"
+      ],
+      "rules": [
+        "kotlin"
       ]
     },
     "swift": {
@@ -171,6 +197,9 @@
       "skills": [
         "swiftui-patterns",
         "swift-concurrency-6-2"
+      ],
+      "rules": [
+        "swift"
       ]
     },
     "cpp": {
@@ -183,6 +212,9 @@
       "skills": [
         "cpp-coding-standards",
         "cpp-testing"
+      ],
+      "rules": [
+        "cpp"
       ]
     },
     "csharp": {
@@ -194,6 +226,9 @@
       "skills": [
         "csharp-testing",
         "dotnet-patterns"
+      ],
+      "rules": [
+        "csharp"
       ]
     },
     "php": {
@@ -205,6 +240,9 @@
       "skills": [
         "laravel-patterns",
         "laravel-tdd"
+      ],
+      "rules": [
+        "php"
       ]
     },
     "django": {
@@ -218,6 +256,9 @@
         "django-patterns",
         "django-tdd",
         "django-security"
+      ],
+      "rules": [
+        "python"
       ]
     },
     "fastapi": {
@@ -228,6 +269,9 @@
       },
       "skills": [
         "fastapi-patterns"
+      ],
+      "rules": [
+        "python"
       ]
     },
     "flutter": {
@@ -240,7 +284,13 @@
       "skills": [
         "dart-flutter-patterns",
         "flutter-dart-code-review"
+      ],
+      "rules": [
+        "dart"
       ]
     }
-  }
+  },
+  "rules": [
+    "common"
+  ]
 }

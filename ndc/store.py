@@ -40,8 +40,10 @@ def now() -> str:
 
 
 def connect(path=None) -> sqlite3.Connection:
-    db = sqlite3.connect(path or state_dir() / "ndc.db")
+    db = sqlite3.connect(path or state_dir() / "ndc.db", timeout=30)  # parallel workers share the file
     db.row_factory = sqlite3.Row
+    if str(path) != ":memory:":
+        db.execute("PRAGMA journal_mode=WAL")
     db.executescript(SCHEMA)
     _migrate(db)
     return db

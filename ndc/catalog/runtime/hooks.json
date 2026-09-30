@@ -1,0 +1,113 @@
+{
+  "hooks": [
+    {
+      "id": "pre:bash:block-no-verify",
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "script": "scripts/hooks/block-no-verify.js",
+      "profiles": "minimal,standard,strict",
+      "group": "safety",
+      "runner": true,
+      "desc": "Blocks git --no-verify and core.hooksPath overrides, so an agent cannot skip your git hooks"
+    },
+    {
+      "id": "pre:config-protection",
+      "event": "PreToolUse",
+      "matcher": "Write|Edit|MultiEdit",
+      "script": "scripts/hooks/config-protection.js",
+      "profiles": "standard,strict",
+      "group": "safety",
+      "runner": true,
+      "timeout": 5,
+      "desc": "Blocks edits to existing linter/formatter configs (fix the code, do not weaken the rules)"
+    },
+    {
+      "id": "pre:bash:commit-quality",
+      "event": "PreToolUse",
+      "matcher": "Bash",
+      "script": "scripts/hooks/pre-bash-commit-quality.js",
+      "profiles": "strict",
+      "group": "safety",
+      "runner": true,
+      "desc": "Before git commit: checks staged files for secrets, debugger/console.log and commit message format"
+    },
+    {
+      "id": "pre:edit-write:suggest-compact",
+      "event": "PreToolUse",
+      "matcher": "Edit|Write",
+      "script": "scripts/hooks/suggest-compact.js",
+      "profiles": "standard,strict",
+      "group": "memory",
+      "runner": false,
+      "desc": "Suggests /compact at logical points of a long interactive session"
+    },
+    {
+      "id": "pre:compact",
+      "event": "PreCompact",
+      "matcher": ".*",
+      "script": "scripts/hooks/pre-compact.js",
+      "profiles": "standard,strict",
+      "group": "memory",
+      "runner": false,
+      "desc": "Logs state before context compaction (no model call)"
+    },
+    {
+      "id": "session:start",
+      "event": "SessionStart",
+      "matcher": ".*",
+      "script": "scripts/hooks/session-start.js",
+      "profiles": "minimal,standard,strict",
+      "group": "memory",
+      "runner": false,
+      "desc": "Loads the previous session summary as context (costs tokens at every session start)"
+    },
+    {
+      "id": "stop:session-end",
+      "event": "Stop",
+      "matcher": ".*",
+      "script": "scripts/hooks/session-end.js",
+      "profiles": "minimal,standard,strict",
+      "group": "memory",
+      "runner": false,
+      "async": true,
+      "timeout": 10,
+      "desc": "Saves a summary of the session for the next one (no model call)"
+    },
+    {
+      "id": "stop:evaluate-session",
+      "event": "Stop",
+      "matcher": ".*",
+      "script": "scripts/hooks/evaluate-session.js",
+      "profiles": "minimal,standard,strict",
+      "group": "learning",
+      "runner": false,
+      "async": true,
+      "timeout": 10,
+      "desc": "Continuous learning: extracts reusable patterns from long sessions"
+    },
+    {
+      "id": "stop:cost-tracker",
+      "event": "Stop",
+      "matcher": ".*",
+      "script": "scripts/hooks/cost-tracker.js",
+      "profiles": "minimal,standard,strict",
+      "group": "metrics",
+      "runner": true,
+      "async": true,
+      "timeout": 10,
+      "desc": "Records token and cost metrics locally"
+    },
+    {
+      "id": "session:end:marker",
+      "event": "SessionEnd",
+      "matcher": ".*",
+      "script": "scripts/hooks/session-end-marker.js",
+      "profiles": "minimal,standard,strict",
+      "group": "metrics",
+      "runner": true,
+      "async": true,
+      "timeout": 10,
+      "desc": "Marks the end of a session"
+    }
+  ]
+}
